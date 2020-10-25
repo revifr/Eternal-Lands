@@ -32,9 +32,6 @@
 #include "map.h"
 #include "image_loading.h"
 
-int minimap_win = -1;
-int minimap_win_x = 5;
-int minimap_win_y = 20;
 float minimap_tiles_distance = 48;
 int rotate_minimap = 1;
 int pin_minimap = 0;
@@ -213,7 +210,7 @@ static __inline__ void draw_actor_points(window_info *win, float zoom_multip, fl
 
 		if (x != px || y != py)
 		{
-			float diff = 6.0f*zoom_multip;
+			float diff = 6.0f * zoom_multip * win->current_scale;
 
 			if(is_within_radius(x,y,px,py,zoom_multip*(minimap_size/2-15)))
 			{
@@ -221,7 +218,7 @@ static __inline__ void draw_actor_points(window_info *win, float zoom_multip, fl
 				glDisable(GL_TEXTURE_2D);
 				rotate_actor_points(zoom_multip,px,py);
 				glBegin(GL_LINES);
-				glColor3f(1.0f,0.0f,1.0f); //purple
+				elglColourN("minimap.cross");
 				glVertex2f(x-diff, y-diff);
 				glVertex2f(x+diff, y+diff);
 				glVertex2f(x-diff, y+diff);
@@ -363,11 +360,11 @@ static __inline__ void draw_map(window_info *win,float zoom_multip, float px, fl
 static void draw_minimap_title_bar(window_info *win)
 {
 	float u_first_start= (float)31/255;
-	float u_first_end = 0.0f;
+	float u_first_end = 0.5f/255.0f;
 	float v_first_start = (float)160/255;
 	float v_first_end = (float)175/255;
 
-	float u_last_start = 0.0f;
+	float u_last_start = 0.5f/255.0f;
 	float u_last_end = (float)31/255;
 	float v_last_start = (float)160/255;
 	float v_last_end = (float)175/255;
@@ -418,23 +415,15 @@ static void draw_minimap_title_bar(window_info *win)
 	//draw the rectngle
 	glColor3f(win->line_color[0],win->line_color[1],win->line_color[2]);
 	glBegin(GL_LINE_STRIP);
-		glVertex2i(close_button_x + win->title_height-2 - gx_adjust, win->title_height-1 - gy_adjust);
-		glVertex2i(close_button_x + 1 - gx_adjust, win->title_height-1 - gy_adjust);
-		glVertex2i(close_button_x + 1 - gx_adjust, 2 - gy_adjust);
-		glVertex2i(close_button_x + win->title_height-2 - gx_adjust, 2 - gy_adjust);
-		glVertex2i(close_button_x + win->title_height-2 - gx_adjust, win->title_height-1 - gy_adjust);
+		glVertex2i(close_button_x + win->title_height, win->title_height);
+		glVertex2i(close_button_x, win->title_height);
+		glVertex2i(close_button_x, 0);
+		glVertex2i(close_button_x + win->title_height, 0);
+		glVertex2i(close_button_x + win->title_height, win->title_height);
 	glEnd();
 	//draw the X
-	glLineWidth(2.0f);
-	glBegin(GL_LINES);
-		glVertex2i(close_button_x + 3, 4);
-		glVertex2i(close_button_x + win->title_height-3, win->title_height-4);
-		glVertex2i(close_button_x + win->title_height-3, 4);
-		glVertex2i(close_button_x + 3, win->title_height-4);
-	glEnd();
-
-	glLineWidth(1.0f);
-
+	draw_cross(close_button_x + win->title_height / 2, win->title_height / 2,
+		win->title_height / 2 - win->title_height / 6, 1);
 	glPopMatrix();
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
@@ -451,10 +440,14 @@ static int display_minimap_handler(window_info *win)
 	float x,y;
 	int i;
 
-	if(win->pos_x > window_width - 50)
-		move_window(minimap_win,win->pos_id,win->pos_loc,window_width-minimap_size,win->pos_y);
-	if(win->pos_y > window_height - 50)
-		move_window(minimap_win,win->pos_id,win->pos_loc,win->pos_x,window_height-minimap_size);
+	if (win->pos_x + win->len_x/2 < 0)
+		move_window(win->window_id, win->pos_id, win->pos_loc, -win->len_x/2, win->pos_y);
+	else if (win->pos_x > window_width - win->len_x/2)
+		move_window(win->window_id, win->pos_id, win->pos_loc, window_width - win->len_x/2, win->pos_y);
+	if (win->pos_y < 0)
+		move_window(win->window_id, win->pos_id, win->pos_loc, win->pos_x, win->title_height);
+	else if (win->pos_y > window_height - win->title_height)
+		move_window(win->window_id, win->pos_id, win->pos_loc, win->pos_x, window_height - win->title_height);
 
 	if (enable_controls)
 	{
@@ -571,7 +564,7 @@ static int click_minimap_handler(window_info * win, int mx, int my, Uint32 flags
 		if((mx >=close_button_x) && (mx <=close_button_x + win->title_height) 
 			&&	(my <= win->title_height))
 		{
-			hide_window(minimap_win);
+			hide_window(win->window_id);
 			return 1;
 		}
 		else if(my >= win->title_height)
@@ -599,18 +592,16 @@ static int click_minimap_handler(window_info * win, int mx, int my, Uint32 flags
 	return 0;
 }
 
-static int keypress_minimap_handler (window_info *win, int mx, int my, Uint32 key, Uint32 unikey)
+static int keypress_minimap_handler (window_info *win, int mx, int my, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod)
 {
-	Uint16 keysym = key & 0xffff;
-
 	if (is_within_radius(mx,my-win->title_height,float_minimap_size/2,float_minimap_size/2,float_minimap_size/2))
 	{
-		if((keysym == SDLK_KP_PLUS) || (keysym == SDLK_PAGEUP))
+		if((key_code == SDLK_KP_PLUS) || (key_code == SDLK_PAGEUP))
 		{
 			increase_zoom();
 			return 1;
 		}
-		else if ((keysym == SDLK_KP_MINUS) ||  (keysym == SDLK_PAGEDOWN))
+		else if ((key_code == SDLK_KP_MINUS) ||  (key_code == SDLK_PAGEDOWN))
 		{
 			decrease_zoom();
 			return 1;
@@ -704,7 +695,7 @@ void change_minimap(void)
 {
 	char minimap_file_name[256];
 
-	if(minimap_win < 0)
+	if(get_id_MW(MW_MINIMAP) < 0)
 		return;
 	//save_exploration_map();
 
@@ -759,14 +750,14 @@ static int ui_scale_minimap_handler(window_info *win)
 	if (title_len + win->title_height > win->len_x/2)
 		title_len = win->len_x/2 - win->title_height;
 	cm_remove_regions(win->cm_id);
-	cm_add_region(win->cm_id, minimap_win, win->len_x/2-title_len, 0, title_len*2, win->title_height );
+	cm_add_region(win->cm_id, win->window_id, win->len_x/2-title_len, 0, title_len*2, win->title_height );
 	resize_window(win->window_id, minimap_size, minimap_size + win->title_height);
 	return 1;
 }
 
 void display_minimap(void)
 {
-	window_info *win;
+	int minimap_win = get_id_MW(MW_MINIMAP);
 
 	minimap_size = 256 * minimap_size_coefficient;
 	float_minimap_size = 256.0 * minimap_size_coefficient;
@@ -779,12 +770,14 @@ void display_minimap(void)
 	if(minimap_win < 0)
 	{
 		//init minimap
-		minimap_win = create_window(win_minimap, windows_on_top?-1:game_root_win, 0, minimap_win_x, minimap_win_y, 
+		window_info *win;
+		minimap_win = create_window(win_minimap, (not_on_top_now(MW_MANU) ?game_root_win : -1), 0, get_pos_x_MW(MW_MINIMAP), get_pos_y_MW(MW_MINIMAP), 
 			minimap_size, minimap_size+ELW_TITLE_HEIGHT, ELW_USE_UISCALE|ELW_CLICK_TRANSPARENT|ELW_SHOW|ELW_TITLE_NAME|ELW_ALPHA_BORDER|ELW_SWITCHABLE_OPAQUE|ELW_DRAGGABLE);
+		set_id_MW(MW_MINIMAP, minimap_win);
 		set_window_handler(minimap_win, ELW_HANDLER_DISPLAY, &display_minimap_handler);	
 		set_window_handler(minimap_win, ELW_HANDLER_CLICK, &click_minimap_handler);	
 		set_window_handler(minimap_win, ELW_HANDLER_MOUSEOVER, &mouseover_minimap_handler);	
-		set_window_handler(minimap_win, ELW_HANDLER_KEYPRESS, &keypress_minimap_handler );
+		set_window_handler(minimap_win, ELW_HANDLER_KEYPRESS, (int (*)())&keypress_minimap_handler );
 		set_window_handler(minimap_win, ELW_HANDLER_UI_SCALE, &ui_scale_minimap_handler);
 		win = &(windows_list.window[minimap_win]);
 		win->owner_drawn_title_bar = 1;
@@ -798,6 +791,7 @@ void display_minimap(void)
 		}
 
 		ui_scale_minimap_handler(win);
+		check_proportional_move(MW_MINIMAP);
 
 		cm_add(win->cm_id, cm_minimap_menu_str, NULL);
 		cm_add_region(win->cm_id, minimap_win, win->len_x/2-title_len, 0, title_len*2, win->title_height );

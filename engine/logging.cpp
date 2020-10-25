@@ -15,12 +15,13 @@
 #include <vector>
 #include <map>
 #include <cstdio>
+#include <algorithm>
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <SDL/SDL_mutex.h>
-#include <SDL/SDL_thread.h>
+#include <SDL_mutex.h>
+#include <SDL_thread.h>
 #include "../elc_private.h"
 
 namespace eternal_lands

@@ -11,8 +11,8 @@
 #include "cursors.h"
 #include "draw_scene.h"
 #include "errors.h"
+#include "events.h"
 #include "gl_init.h"
-#include "global.h"
 #include "interface.h"
 #include "load_gl_extensions.h"
 #include "map.h"
@@ -20,6 +20,7 @@
 #include "new_actors.h"
 #include "platform.h"
 #include "shadows.h"
+#include "special_effects.h"
 #include "textures.h"
 #include "translate.h"
 #include "vmath.h"
@@ -34,10 +35,8 @@
 #endif	/* FSAA */
 
 #ifdef ELC
-#define DRAW_ORTHO_INGAME_NORMAL(x, y, z, our_string, max_lines)	draw_ortho_ingame_string(x, y, z, (const Uint8*)our_string, max_lines, INGAME_FONT_X_LEN*10.0, INGAME_FONT_Y_LEN*10.0)
-#define DRAW_INGAME_NORMAL(x, y, our_string, max_lines)	draw_ingame_string(x, y, (const Uint8*)our_string, max_lines, INGAME_FONT_X_LEN, INGAME_FONT_Y_LEN)
+#define DRAW_ORTHO_INGAME_NORMAL(x, y, z, our_string, max_lines)	draw_ortho_ingame_string(x, y, z, (const Uint8*)our_string, max_lines, INGAME_FONT_X_LEN*10.0, INGAME_FONT_X_LEN*10.0)
 #define DRAW_INGAME_SMALL(x, y, our_string, max_lines)	draw_ingame_string(x, y, (const Uint8*)our_string, max_lines, SMALL_INGAME_FONT_X_LEN, SMALL_INGAME_FONT_Y_LEN)
-#define DRAW_INGAME_ALT(x, y, our_string, max_lines)	draw_ingame_string(x, y, (const Uint8*)our_string, max_lines, ALT_INGAME_FONT_X_LEN, ALT_INGAME_FONT_Y_LEN)
 #endif
 
 actor *actors_list[MAX_ACTORS];
@@ -59,7 +58,7 @@ float distanceSq_to_near_enhanced_actors;
 near_actor near_actors[MAX_ACTORS];
 
 #ifdef MUTEX_DEBUG
-Uint32 have_actors_lock = 0;
+SDL_threadID have_actors_lock = 0;
 #endif
 
 int cm_mouse_over_banner = 0;		/* use to trigger banner context menu */
@@ -212,7 +211,7 @@ int add_actor (int actor_type, char * skin_name, float x_pos, float y_pos, float
 	for(k=0;k<MAX_EMOTE_FRAME;k++) our_actor->cur_emote.frames[k].anim_index=-1;
 	our_actor->cur_emote.idle.anim_index=-1;
 	our_actor->cur_emote_sound_cookie=0;
-	
+
 
 
 
@@ -351,6 +350,7 @@ void remove_actor_attachment(int actor_id)
 			actors_list[i]->attachment_shift[0] = 0.0;
 			actors_list[i]->attachment_shift[1] = 0.0;
 			actors_list[i]->attachment_shift[2] = 0.0;
+			free_actor_special_effect(actors_list[att]->actor_id);
 			free_actor_data(att);
 			free(actors_list[att]);
 			actors_list[att]=NULL;
@@ -369,9 +369,27 @@ void remove_actor_attachment(int actor_id)
 	UNLOCK_ACTORS_LISTS();
 }
 
-void set_health_color(float percent, float multiplier, float a)
+static void set_health_color(actor * actor_id, float percent, float multiplier, float a)
 {
 	float r,g;
+
+	if (actor_id != NULL)
+	{
+		// Only a subset of actors have health bars, so the choice
+		// here is limited.
+		if (actor_id->actor_id == yourself)
+		{
+			if (!dynamic_banner_colour.yourself)
+				percent = 1.0f;
+		}
+		else if (actor_id->is_enhanced_model)
+		{
+			if (!dynamic_banner_colour.other_players)
+				percent = 1.0f;
+		}
+		else if (!dynamic_banner_colour.creatures)
+			percent = 1.0f;
+	}
 
 	r=(1.0f-percent)*2.0f;
 	g=(percent/1.25f)*2.0f;
@@ -384,9 +402,12 @@ void set_health_color(float percent, float multiplier, float a)
 	glColor4f(r*multiplier,g*multiplier,0.0f, a);
 }
 
-void set_mana_color(float percent, float multiplier, float a)
+static void set_mana_color(float percent, float multiplier, float a)
 {
 	float c;
+
+	if (!dynamic_banner_colour.yourself)
+		percent = 1.0f;
 
 	c=0.6f - percent*0.6f;
 
@@ -405,6 +426,7 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 	GLint view[4];
 
 	GLdouble hx,hy,hz,a_bounce;
+	float name_zoom = font_scales[NAME_FONT];
 	float font_scale = 1.0f/ALT_INGAME_FONT_X_LEN;
 	double healthbar_x=0.0f;
 	double healthbar_y=0.0f;
@@ -527,15 +549,20 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 			 * an exit condition at the beginning of the function */
 			if ((first_person)&&(actor_id->actor_id==yourself)){
 				float x,y;
-				x = window_width/2.0 -(((float)get_string_width(str) * (font_scale*0.17*name_zoom)))*0.5f;
+				x = window_width / 2.0 - 0.5f * (float)get_string_width_zoom(str, NAME_FONT,  font_scale*0.17);
 				y = a_bounce + window_height/2.0-40.0;
-				draw_ortho_ingame_string(x, y, 0, str, 1, font_scale*.14, font_scale*.21);
+				draw_ortho_ingame_string(x, y, 0, str, 1, font_scale*.14, font_scale*.14);
 			}
 			else
 			{
 				float font_scale2 = font_scale*powf(1.0f+((float)abs(actor_id->damage)/2.0f)/1000.0f, 4.0);
-				draw_ortho_ingame_string(hx-(((float)get_string_width(str) * (font_scale2*0.17*name_zoom)))*0.5f, a_bounce+hy+10.0f, 0, str, 1, font_scale2*.14, font_scale2*.21);
-			}			glDisable(GL_BLEND);
+				int extra_y = (view_mode_instance && displaying_me) ?view_mode_instance_damage_height * bar_y_len : 0;
+				int lines = (!(view_mode_instance && displaying_me) && (display_hp || display_health_bar) && (display_ether || display_ether_bar)) ? 3 : 2;
+				draw_ortho_ingame_string(hx - 0.5f * (float)get_string_width_zoom(str, NAME_FONT, font_scale2*0.17),
+					a_bounce + hy + extra_y + get_text_height(lines, NAME_FONT, name_zoom), 0, str, 1,
+					font_scale2*.14, font_scale2*.14);
+			}
+			glDisable(GL_BLEND);
 		}
 		else
 		{	//No floating messages
@@ -569,12 +596,12 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 	// Schmurk: same here, we actually never reach this code
 	if (!((first_person)&&(actor_id->actor_id==yourself)))
 	{
-		if(actor_id->actor_name[0] && (display_names || display_health_line || display_ether_line)){
-			set_font(name_font);	// to variable length
-
-			if(display_names){
+		if(actor_id->actor_name[0] && (display_names || display_health_line || display_ether_line))
+		{
+			if (display_names)
+			{
 				float font_size_x=font_scale*SMALL_INGAME_FONT_X_LEN;
-				float font_size_y=font_scale*SMALL_INGAME_FONT_Y_LEN;
+				float font_size_y=font_scale*SMALL_INGAME_FONT_X_LEN;
 
 				if(actor_id->kind_of_actor==NPC){
 					glColor3f(0.3f,0.8f,1.0f);
@@ -590,8 +617,9 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 					glColor3f(1.0f,1.0f,0.0f);
 				}
 				safe_snprintf ((char*)temp, sizeof (temp), "%s", actor_id->actor_name);
-				banner_width = ((float)get_string_width((unsigned char*)actor_id->actor_name)*(font_size_x*name_zoom))/2.0;
-				draw_ortho_ingame_string(hx-banner_width, hy+bar_y_len/2.0f, hz, temp, 1, font_size_x, font_size_y);
+				banner_width = 0.5 * (float)get_string_width_zoom((unsigned char*)actor_id->actor_name, NAME_FONT, font_size_x);
+				draw_ortho_ingame_string(hx-banner_width, hy+bar_y_len/2.0f, hz, temp,
+					1, font_size_x, font_size_y);
 			}
 			if (view_buffs)
 			{
@@ -605,11 +633,13 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 				// make the heath bar the same length as the the health text so they are balanced
 				// use the same length health bar, even if not displaying the health text
 				sprintf((char*)hp,"%u/%u", actor_id->cur_health, actor_id->max_health);
-				health_str_x_len = (float)get_string_width(hp)*(ALT_INGAME_FONT_X_LEN*name_zoom*font_scale);
+				health_str_x_len = (float)get_string_width_zoom(hp, NAME_FONT,
+					ALT_INGAME_FONT_X_LEN * font_scale);
 				//do the same with mana if we want to display it
 				if (display_ether || display_ether_bar) {
 					sprintf((char*)mana,"%d/%d", your_info.ethereal_points.cur, your_info.ethereal_points.base);
-					ether_str_x_len=(float)get_string_width(mana)*(ALT_INGAME_FONT_X_LEN*name_zoom*font_scale);
+					ether_str_x_len=(float)get_string_width_zoom(mana, NAME_FONT,
+						ALT_INGAME_FONT_X_LEN * font_scale);
 				}
 				//set bar length to longer one (mana or health) - not really clean solution
 				if (ether_str_x_len > health_str_x_len) {
@@ -639,18 +669,20 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 
 					if (display_hp) {
 						//choose color for the health
-						set_health_color((float)actor_id->cur_health/(float)actor_id->max_health, 1.0f, 1.0f);
-						draw_ortho_ingame_string(hx-disp+hp_off, hy-bar_y_len/3.0f, hz, hp, 1, ALT_INGAME_FONT_X_LEN*font_scale, ALT_INGAME_FONT_Y_LEN*font_scale);
+						set_health_color(actor_id, (float)actor_id->cur_health/(float)actor_id->max_health, 1.0f, 1.0f);
+						draw_ortho_ingame_string(hx-disp+hp_off, hy-bar_y_len/3.0f,
+							hz, hp, 1, ALT_INGAME_FONT_X_LEN*font_scale,
+							ALT_INGAME_FONT_X_LEN*font_scale);
 					}
 
 					if (display_ether) {
 						set_mana_color((float)your_info.ethereal_points.cur / (float)your_info.ethereal_points.base, 1.0f, 1.0f);
-						draw_ortho_ingame_string(hx-disp+eth_off, ey-bar_y_len/3.0f, hz, mana, 1, ALT_INGAME_FONT_X_LEN*font_scale, ALT_INGAME_FONT_Y_LEN*font_scale);
+						draw_ortho_ingame_string(hx-disp+eth_off, ey-bar_y_len/3.0f,
+							hz, mana, 1, ALT_INGAME_FONT_X_LEN*font_scale,
+							ALT_INGAME_FONT_X_LEN*font_scale);
 					}
 				}
 			}
-
-			set_font(0);	// back to fixed pitch
 		}
 	}
 
@@ -660,9 +692,9 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 	if(display_health_bar && display_health_line && (!actor_id->dead) && (actor_id->kind_of_actor != NPC)){
 		float percentage = (float)actor_id->cur_health/(float)actor_id->max_health;
 		float off;
-		
-		if(percentage>110.0f) //deal with massive bars by trimming at 110%
-			percentage = 110.0f;
+
+		if(percentage>1.1f) //deal with massive bars by trimming at 110%
+			percentage = 1.1f;
 		if (display_hp){
 			off = bar_x_len + 5.0f;
 		} else {
@@ -691,12 +723,12 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 		hx-=off;
 
 		//choose tint color
-		set_health_color(percentage, 0.5f, 1.0f);
+		set_health_color(actor_id, percentage, 0.5f, 1.0f);
 		glBegin(GL_QUADS);
 			glVertex3d(hx,hy,hz);
 			glVertex3d(hx+healthbar_x_len_converted,hy,hz);
 
-		set_health_color(percentage, 1.0f, 1.0f);
+		set_health_color(actor_id, percentage, 1.0f, 1.0f);
 
 			glVertex3d(hx+healthbar_x_len_converted,hy+bar_y_len/3.0,hz);
 			glVertex3d(hx,hy+bar_y_len/3.0,hz);
@@ -706,13 +738,13 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 			glEnable(GL_BLEND);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-			set_health_color(percentage, 0.5f, healthbar_x_loss_fade);
+			set_health_color(actor_id, percentage, 0.5f, healthbar_x_loss_fade);
 
 			glBegin(GL_QUADS);
 				glVertex3d(hx+healthbar_x_len_converted, hy, hz);
 				glVertex3d(hx+healthbar_x_len_converted+healthbar_x_len_loss, hy, hz);
 
-			set_health_color(percentage, 1.0f, healthbar_x_loss_fade);
+			set_health_color(actor_id, percentage, 1.0f, healthbar_x_loss_fade);
 
 				glVertex3d(hx+healthbar_x_len_converted+healthbar_x_len_loss, hy+bar_y_len/3.0,hz);
 				glVertex3d(hx+healthbar_x_len_converted, hy+bar_y_len/3.0,hz);
@@ -761,7 +793,7 @@ void draw_actor_banner(actor * actor_id, float offset_z)
 			glVertex3d(hx+etherbar_x_len_converted,ey+bar_y_len/3.0,hz);
 			glVertex3d(hx,ey+bar_y_len/3.0,hz);
 		glEnd();
-		set_health_color(percentage, 1.0f, 1.0f);
+		set_health_color(actor_id, percentage, 1.0f, 1.0f);
 		glDepthFunc(GL_LEQUAL);
 		glColor3f (0.0f, 0.0f, 0.0f);
 		glBegin(GL_LINE_LOOP);
@@ -883,9 +915,9 @@ void draw_actor_overtext( actor* actor_ptr )
 
 	//-- decrease display time
 	actor_ptr->current_displayed_text_time_left -= (cur_time-last_time);
-	if(!(SDL_GetAppState()&SDL_APPACTIVE)) return;	// not actually drawing, fake it
 
-	textwidth = ((float)get_string_width((unsigned char*)(actor_ptr->current_displayed_text))*(SMALL_INGAME_FONT_X_LEN*zoom_level*name_zoom/3.0))/12.0;
+	textwidth = ((float)get_string_width_zoom((unsigned char*)actor_ptr->current_displayed_text,
+		NAME_FONT, SMALL_INGAME_FONT_X_LEN * zoom_level / 3.0)) / 12.0;
 	textheight = (0.06f*zoom_level/3.0)*4;
 	margin = 0.02f*zoom_level;
 	z = 1.2f;// distance over the player
@@ -1394,7 +1426,7 @@ void display_actors(int banner, int render_pass)
 		disable_actor_animation_program();
 	}
 
-	if (banner && (SDL_GetAppState() & SDL_APPACTIVE))
+	if (banner)
 	{
 		if (use_shadow_mapping)
 		{
@@ -1535,7 +1567,7 @@ void add_actor_from_server (const char *in_data, int len)
 		if(frame>=frame_poses_start&&frame<=frame_poses_end) {
 			//we have a pose, get it! (frame is the emote_id)
 			hash_entry *he;
-			he=hash_get(emotes,(void*)(NULL+frame));
+			he=hash_get(emotes,(void*)(uintptr_t)frame);
 			if(!he) LOG_ERROR("unknown pose %d", frame);
 			else pose = he->item;
 			break;
@@ -1565,7 +1597,11 @@ void add_actor_from_server (const char *in_data, int len)
 
 	i= add_actor(actor_type, actors_defs[actor_type].skin_name, f_x_pos, f_y_pos, 0.0, f_z_rot, scale, 0, 0, 0, 0, 0, 0, 0, actor_id);
 
-	if(i==-1) return;//A nasty error occured and we couldn't add the actor. Ignore it.
+	if(i==-1)
+	{
+		UNLOCK_ACTORS_LISTS();
+		return;//A nasty error occured and we couldn't add the actor. Ignore it.
+	}
 
 	//The actors list is locked when we get here...
 
@@ -1661,6 +1697,9 @@ void add_actor_from_server (const char *in_data, int len)
 		actors_list[i]->calmodel=NULL;
 	}
 	update_actor_buffs(actor_id, buffs);
+
+	check_if_new_actor_last_summoned(actors_list[i]);
+
 	UNLOCK_ACTORS_LISTS();	//unlock it
 #ifdef EXTRA_DEBUG
 	ERR();
@@ -1743,3 +1782,104 @@ void transform_actor_local_position_to_absolute(actor *in_act, float *in_local_p
 	}
 }
 
+// Split the given string into basic name and, if any, guild parts.
+// For players, the size should be at least MAX_ACTOR_NAME
+// For non players, the size should be at least ACTOR_NAME_SIZE
+// Name format is <name part> then optional <space><colour character><guild past>
+static void split_name_and_guild(const char *full_name, char *name_part, char *guild_part, size_t parts_size)
+{
+		size_t i, ni=0, gi=0;
+		if ((full_name == NULL) || (name_part == NULL) || (guild_part == NULL) || (parts_size < strlen(full_name)))
+		{
+			LOG_ERROR("invalid parameters");
+			return;
+		}
+		name_part[0] = '\0';
+		guild_part[0] = '\0';
+
+		// get the name without any guild part
+		for (i=0; i<strlen(full_name); ni++, i++)
+		{
+			if (is_color(full_name[i]))
+			{
+				name_part[ni - ((ni==0) ?0: 1)] = '\0';
+				i++;
+				break;
+			}
+			else
+				name_part[ni] = full_name[i];
+		}
+		name_part[ni] = '\0';
+
+		// get the guild if any
+		for (; i<strlen(full_name); gi++, i++)
+		{
+			guild_part[gi] = full_name[i];
+		}
+		guild_part[gi] = '\0';
+}
+
+// A simple structure to hold state for the last summoned creature
+static struct last_summoned
+{
+	Uint32 summoned_time;
+	char summoned_name[256];
+	int actor_id;
+} last_summoned_var = {0, "", -1};
+
+
+// Store the time and the name of the last sucessful summons by the player
+void remember_new_summoned(const char *summoned_name)
+{
+	last_summoned_var.summoned_time = SDL_GetTicks();
+	safe_strncpy2(last_summoned_var.summoned_name, summoned_name, sizeof(summoned_name), strlen(summoned_name));
+	//printf("%u new summoned [%s]\n", last_summoned_var.summoned_time, last_summoned_var.summoned_name);
+}
+
+// Check if the new actor ....
+// 		has been created close in time to the last sucessful summons
+//		has the same name a the last sucessful summons
+//		has the same guild (if any) of the player
+// Must be called while we have the LOCK_ACTORS_LISTS() lock
+void check_if_new_actor_last_summoned(actor *new_actor)
+{
+	if (SDL_GetTicks() < last_summoned_var.summoned_time + 250)
+	{
+		actor *me = get_our_actor();
+		if (me)
+		{
+			char me_name_part[MAX_ACTOR_NAME] = "", me_guild_part[MAX_ACTOR_NAME] = "";
+			char summoned_name_part[ACTOR_DEF_NAME_SIZE] = "", summoned_guild_part[ACTOR_DEF_NAME_SIZE] = "";
+
+			split_name_and_guild(me->actor_name, me_name_part, me_guild_part, MAX_ACTOR_NAME);
+			split_name_and_guild(new_actor->actor_name, summoned_name_part, summoned_guild_part, ACTOR_DEF_NAME_SIZE);
+
+			if ((strcmp(last_summoned_var.summoned_name, summoned_name_part) == 0) &&
+					(strcmp(summoned_guild_part, me_guild_part) == 0))
+				last_summoned_var.actor_id = new_actor->actor_id;
+
+			//printf("%u %s id=%d wanted [%s/%s] got [%s/%s]\n", SDL_GetTicks(),
+			//	((last_summoned_var.actor_id == new_actor->actor_id) ?"MATCHED" : "NO MATCH"), new_actor->actor_id,
+			//	last_summoned_var.summoned_name, me_guild_part, summoned_name_part, summoned_guild_part);
+		}
+	}
+}
+
+// Return the id of the last sucessful summoned creature, if its still present
+int get_id_last_summoned(void)
+{
+	size_t i;
+	if (last_summoned_var.actor_id < 0)
+		return -1;
+
+	// check if the actor is still present
+	LOCK_ACTORS_LISTS();
+	for (i=0; i<max_actors; i++)
+		if (actors_list[i]->actor_id == last_summoned_var.actor_id)
+			break;
+	UNLOCK_ACTORS_LISTS();
+
+	if (i == max_actors)
+		last_summoned_var.actor_id = -1;
+	return last_summoned_var.actor_id;
+}

@@ -15,14 +15,15 @@
 #include "errors.h"
 #include "filter.h"
 #include "gl_init.h"
-#include "global.h"
 #include "hud_misc_window.h"
 #include "highlight.h"
 #include "init.h"
 #include "items.h"
+#include "knowledge.h"
 #include "lights.h"
 #include "misc.h"
 #include "multiplayer.h"
+#include "password_manager.h"
 #include "paste.h"
 #include "pm_log.h"
 #include "translate.h"
@@ -49,12 +50,63 @@ text_message input_text_line;
 
 char last_pm_from[32];
 
-Uint32 last_server_message_time;
-int lines_to_show=0;
+static Uint32 last_server_message_time;
 
 int show_timestamp = 0;
 
 int dark_channeltext = 0;
+
+/* Impliment the glow perk hud indicator state. */
+static int glow_perk_check_state = 0;
+static int glow_perk_active = 0;
+static int glow_perk_unavailable = 1;
+static Uint32 glow_perk_timer = 0;
+
+void check_glow_perk(void) { glow_perk_check_state = 3; }
+int glow_perk_is_active(void) { return glow_perk_active; };
+
+/*
+ * Called each frame by the hud indicator code if the glow perk indcator is enabled.
+*/
+int glow_perk_is_unavailable(void)
+{
+	/*
+	 * The first #glow will be sent when a new login happens.  When the
+	 * message text arrives, another #glow will be sent after a timeout.
+	 * By togginging twice, we get the starting state and preserve it.
+	*/
+	if (glow_perk_check_state == 3)
+	{
+		send_input_text_line("#glow", 5);
+		glow_perk_unavailable = 1;
+		glow_perk_check_state--;
+	}
+	else if (glow_perk_timer && ((SDL_GetTicks()-glow_perk_timer) > 1500))
+	{
+		send_input_text_line("#glow", 5);
+		glow_perk_timer = 0;
+	}
+	return glow_perk_unavailable;
+};
+
+/*
+ * Called when we receive #glow command text.
+*/
+static int set_glow_status(int value)
+{
+	glow_perk_active = value;
+	if (glow_perk_check_state)
+	{
+		if (--glow_perk_check_state)
+			glow_perk_timer = SDL_GetTicks();
+		else
+			glow_perk_unavailable = 0;
+		return 1;
+	}
+	glow_perk_unavailable = 0;
+	return 0;
+}
+/* End glow perk hud indicator state. */
 
 static int is_special_day = 0;
 int today_is_special_day(void) { return is_special_day; };
@@ -69,7 +121,6 @@ void clear_seen_pm_count(void) { seen_pm_count = 0; }
 
 int log_chat = LOG_SERVER;
 
-float	chat_zoom=1.0;
 FILE	*chat_log=NULL;
 FILE	*srv_log=NULL;
 
@@ -147,7 +198,7 @@ void open_chat_log(){
 		char logsuffix[7];
 		strftime(logsuffix, sizeof(logsuffix), "%Y%m", l_time);
 		safe_snprintf (chat_log_file, sizeof (chat_log_file),  "chat_log_%s.txt", logsuffix);
-		safe_snprintf (srv_log_file, sizeof (srv_log_file), "srv_log_%s.txt", logsuffix); 
+		safe_snprintf (srv_log_file, sizeof (srv_log_file), "srv_log_%s.txt", logsuffix);
 	}
 	else
 	{
@@ -309,9 +360,9 @@ int match_emote(emote_dict *command, actor *act, int send)
 {
 	hash_entry *match;
 
-	// Try to match the input against an emote command and actor type	
+	// Try to match the input against an emote command and actor type
 	match=hash_get(emote_cmds,(void*)command->command);
-	
+
 	if(match){
 		//printf("Emote <%s> sent (%p)\n",((emote_dict*)match->item)->command,((emote_dict*)match->item)->emote);
 		//SEND emote to server
@@ -330,7 +381,7 @@ int parse_text_for_emote_commands(const char *text, int len)
 	emote_dict emote_text;
 	actor *act;
 
-	
+
 	//printf("parsing local for emotes\n");
 	//extract name
 	while(text[i]&&i<20){
@@ -340,7 +391,7 @@ int parse_text_for_emote_commands(const char *text, int len)
 			name[j]=0;
 			if(text[i]==':') i++;
 			break;
-		} 
+		}
 		i++;j++;
 	}
 
@@ -356,11 +407,11 @@ int parse_text_for_emote_commands(const char *text, int len)
 		return 1;		// Eek! We don't have an actor match... o.O
 	}
 
-	if (!(!strncasecmp(act->actor_name, name, strlen(name)) && 
+	if (!(!strncasecmp(act->actor_name, name, strlen(name)) &&
 			(act->actor_name[strlen(name)] == ' ' ||
 			act->actor_name[strlen(name)] == '\0'))){
 		//we are not saying this text, return
-		//UNLOCK_ACTORS_LISTS();			
+		//UNLOCK_ACTORS_LISTS();
 		//return 0;
 			itsme=0;
 	} else itsme=1;
@@ -380,9 +431,9 @@ int parse_text_for_emote_commands(const char *text, int len)
 				emote_text.command[j]=text[i];
 			j++;
 		}
-	} while(text[i++]);	
+	} while(text[i++]);
 	//printf("ef=%i, wf=%i, filter=>%i\n",ef,wf,emote_filter);
-	UNLOCK_ACTORS_LISTS();			
+	UNLOCK_ACTORS_LISTS();
 
 	return  ((ef==wf) ? (emote_filter):(0));
 
@@ -408,7 +459,7 @@ void check_harvesting_effect(void)
 			harvesting_effect_reference = ec_create_ongoing_harvesting2(act, 1.0, 1.0, (poor_man ? 6 : 10), 1.0);
 		UNLOCK_ACTORS_LISTS();
 	}
-}	
+}
 
 
 int filter_or_ignore_text (char *text_to_add, int len, int size, Uint8 channel)
@@ -532,12 +583,35 @@ int filter_or_ignore_text (char *text_to_add, int len, int size, Uint8 channel)
 		{
 			clear_now_harvesting();
 		}
+		else if (my_strncompare(text_to_add+1, "Great, you changed your password!", 33))
+		{
+			passmngr_confirm_pw_change();
+		}
+		else if (my_strncompare(text_to_add+1, "Glow on!", 8))
+		{
+			if (set_glow_status(1))
+				return 0;
+		}
+		else if (my_strncompare(text_to_add+1, "Glow off!", 9))
+		{
+			if (set_glow_status(0))
+				return 0;
+		}
+		else if (my_strncompare(text_to_add+1, "You need the I glow in the dark perk in order to use this.", 58))
+		{
+			glow_perk_unavailable = 1;
+			if (glow_perk_check_state)
+			{
+				glow_perk_check_state = 0;
+				return 0;
+			}
+		}
 		else if (is_death_message(text_to_add+1)) {
 			// nothing to be done here cause all is done in the test function
 		}
 		else if (my_strncompare(text_to_add+1, "You found ", 10) && strstr(text_to_add+1, " coins.")) {
 			decrement_harvest_counter(atoi(text_to_add+11));
-		} 
+		}
 		else if (my_strncompare(text_to_add+1, "Send Item UIDs ", 15)) {
 			if (text_to_add[1+15] == '0')
 				item_uid_enabled = 0;
@@ -584,7 +658,11 @@ int filter_or_ignore_text (char *text_to_add, int len, int size, Uint8 channel)
 			set_today_is_special_day();
 		}
 		else if (strstr(text_to_add+1, "You'd need a pair of binoculars to read the book from here - get closer!")) {
-			if (book_opened == -1)
+			if (!book_window_is_open())
+				return 0;
+		}
+		else if (my_strncompare(text_to_add+1, "You are researching ", 20)) {
+			if (get_true_knowledge_info(text_to_add+1))
 				return 0;
 		}
 		else {
@@ -610,8 +688,8 @@ int filter_or_ignore_text (char *text_to_add, int len, int size, Uint8 channel)
 		}
 
 	} else if (channel == CHAT_LOCAL) {
-		if (now_harvesting() && my_strncompare(text_to_add+1, username_str, strlen(username_str))) {
-			char *ptr = text_to_add+1+strlen(username_str);
+		if (now_harvesting() && my_strncompare(text_to_add+1, get_username(), strlen(get_username()))) {
+			char *ptr = text_to_add+1+strlen(get_username());
 			if (my_strncompare(ptr, " found a ", 9)) {
 				ptr += 9;
 				if (my_strncompare(ptr, "bag of gold, getting ", 21)) {
@@ -630,7 +708,7 @@ int filter_or_ignore_text (char *text_to_add, int len, int size, Uint8 channel)
 
 	/* put #mpm in a popup box, on top of all else */
 	if ((channel == CHAT_MODPM) && (my_strncompare(text_to_add+1, "[Mod PM from", 12))) {
-		display_server_popup_win(text_to_add);
+		display_server_popup_win((const unsigned char*)text_to_add);
 	}
 
 	// look for astrology messages
@@ -969,6 +1047,8 @@ void put_colored_text_in_buffer (Uint8 color, Uint8 channel, const Uint8 *text_t
 		text_color = c_grey2;
 	else if (dark_channeltext==2)
 		text_color = c_grey4;
+	else
+		text_color = c_red1; // unexpected
 
 	if (ibreak >= len)
 	{
@@ -1094,124 +1174,24 @@ void put_colored_text_in_buffer (Uint8 color, Uint8 channel, const Uint8 *text_t
 	return;
 }
 
-void put_small_text_in_box_zoomed (const Uint8 *text_to_add, int len, int pixels_limit, char *buffer, float text_zoom)
-{
-	put_small_colored_text_in_box_zoomed (c_grey1, text_to_add, len, pixels_limit, buffer, text_zoom);
-}
-
-void put_small_colored_text_in_box_zoomed (Uint8 color, const Uint8 *text_to_add, int len, int pixels_limit, char *buffer, float text_zoom)
-{
-	int i;
-	Uint8 cur_char;
-	int last_text = 0;
-	int x_chars_limit;
-
-	// force the color
-	if (!is_color (text_to_add[0]))
-		buffer[last_text++] = to_color_char (color);
-
-	//see if the text fits on the screen
-	x_chars_limit = pixels_limit / (int)(0.5 + SMALL_FONT_X_LEN * text_zoom);
-	if (len <= x_chars_limit)
-	{
-		for (i = 0; i < len; i++)
-		{
-			cur_char = text_to_add[i];
-
-			if (cur_char == '\0')
-				break;
-
-			buffer[last_text++] = cur_char;
-		}
-		if (last_text > 0 && buffer[last_text-1] != '\n')
-			buffer[last_text++] = '\n';
-		buffer[last_text] = '\0';
-	}
-	else //we have to add new lines to our text...
-	{
-		int k;
-		int new_line_pos = 0;
-		char semaphore = 0;
-		Uint8 current_color = to_color_char (color);
-
-		// go trought all the text
-		for (i = 0; i < len; i++)
-		{
-			if (!semaphore && new_line_pos + x_chars_limit < len) //don't go through the last line
-			{
-				//find the closest space from the end of this line
-				//if we have one really big word, then parse the string from the
-				//end of the line backwards, untill the beginning of the line +2
-				//the +2 is so we avoid parsing the ": " thing...
-				for (k = new_line_pos + x_chars_limit - 1; k > new_line_pos + 2; k--)
-				{
-					cur_char = text_to_add[k];
-					if (k > len) continue;
-					if (cur_char == ' ' || cur_char == '\n')
-					{
-						k++; // let the space on the previous line
-						break;
-					}
-				}
-				if (k == new_line_pos + 2)
-					new_line_pos += x_chars_limit;
-				else
-					new_line_pos = k;
-				semaphore = 1;
-			}
-
-			cur_char = text_to_add[i];
-			if (cur_char == '\0') break;
-
-			if (is_color (cur_char)) // we have a color, save it
-			{
-				current_color = cur_char;
-				if (last_text > 0 && is_color (buffer[last_text-1]))
-					last_text--;
-			}
-			else if (cur_char == '\n')
-			{
-				new_line_pos = i;
-			}
-
-			if (i == new_line_pos)
-			{
-				buffer[last_text++] = '\n';
-				// don't add color codes after the last newline
-				if (i < len-1)
-					buffer[last_text++] = current_color;
-				semaphore = 0;
-			}
-			//don't add another new line, if the current char is already a new line...
-			if (cur_char != '\n')
-				buffer[last_text++] = cur_char;
-
-		}
-		// don't add extra newlines if there already is one
-		if (last_text > 0 && buffer[last_text-1] != '\n')
-			buffer[last_text++] = '\n';
-		buffer[last_text] = '\0';
-	}
-}
-
-
 // find the last lines, according to the current time
 int find_last_lines_time (int *msg, int *offset, Uint8 filter, int width)
 {
 	// adjust the lines_no according to the time elapsed since the last message
 	if ( (cur_time - last_server_message_time) / 1000 > 3)
 	{
-		if (lines_to_show > 0)
-			lines_to_show--;
+		dec_lines_to_show();
 		last_server_message_time = cur_time;
 	}
-	if (lines_to_show <= 0) return 0;
+	if (get_lines_to_show() <= 0) return 0;
 
-	return find_line_nr (get_total_nr_lines(), get_total_nr_lines() - lines_to_show, filter, msg, offset, chat_zoom, width);
+	find_line_nr(get_total_nr_lines(), get_total_nr_lines() - get_lines_to_show(),
+		filter, msg, offset, CHAT_FONT, 1.0, width);
+	return 1;
 }
 
-
-int find_line_nr (int nr_lines, int line, Uint8 filter, int *msg, int *offset, float zoom, int width)
+void find_line_nr(int nr_lines, int line, Uint8 filter, int *msg, int *offset,
+	font_cat font, float zoom, int width)
 {
 	int line_count = 0, lines_no = nr_lines - line;
 	int imsg, ichar;
@@ -1221,7 +1201,7 @@ int find_line_nr (int nr_lines, int line, Uint8 filter, int *msg, int *offset, f
 	if ( imsg<0 ) {
 		/* No data in buffer */
 		*msg = *offset = 0;
-		return 1;
+		return;
 	}
 	do
 	{
@@ -1244,7 +1224,7 @@ int find_line_nr (int nr_lines, int line, Uint8 filter, int *msg, int *offset, f
 				// happening.
 				break;
 
-			rewrap_message(&display_text_buffer[imsg], zoom, width, NULL);
+			rewrap_message(&display_text_buffer[imsg], font, zoom, width, NULL);
 
 			for (ichar = display_text_buffer[imsg].len - 1; ichar >= 0; ichar--)
 			{
@@ -1255,7 +1235,7 @@ int find_line_nr (int nr_lines, int line, Uint8 filter, int *msg, int *offset, f
 					{
 						*msg = imsg;
 						*offset = ichar+1;
-						return 1;
+						return;
 					}
 				}
 			}
@@ -1265,7 +1245,7 @@ int find_line_nr (int nr_lines, int line, Uint8 filter, int *msg, int *offset, f
 			{
 				*msg = imsg;
 				*offset = 0;
-				return 1;
+				return;
 			}
 		}
 
@@ -1275,7 +1255,6 @@ int find_line_nr (int nr_lines, int line, Uint8 filter, int *msg, int *offset, f
 
 	*msg = 0;
 	*offset = 0;
-	return 1;
 }
 
 void clear_display_text_buffer ()
@@ -1298,7 +1277,7 @@ void clear_display_text_buffer ()
 	}
 }
 
-int rewrap_message(text_message * msg, float zoom, int width, int * cursor)
+int rewrap_message(text_message* msg, font_cat cat, float text_zoom, int width, int *cursor)
 {
 	int nlines;
 	float max_line_width = 0;
@@ -1306,13 +1285,14 @@ int rewrap_message(text_message * msg, float zoom, int width, int * cursor)
 	if (msg == NULL || msg->data == NULL || msg->deleted)
 		return 0;
 
-	if (msg->wrap_width != width || msg->wrap_zoom != zoom)
+	if (msg->wrap_width != width || msg->wrap_zoom != text_zoom)
 	{
- 		nlines = reset_soft_breaks(msg->data, msg->len, msg->size, zoom, width, cursor, &max_line_width);
+ 		nlines = reset_soft_breaks((unsigned char*)msg->data, msg->len, msg->size,
+			cat, text_zoom, width, cursor, &max_line_width);
 		msg->len = strlen(msg->data);
 		msg->wrap_lines = nlines;
 		msg->wrap_width = width;
-		msg->wrap_zoom = zoom;
+		msg->wrap_zoom = text_zoom;
 		msg->max_line_width = max_line_width;
 	} else {
 		nlines = msg->wrap_lines;

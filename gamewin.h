@@ -8,10 +8,22 @@
 
 #include <SDL_types.h>
 #include "elwindows.h"
+#include "keys.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*! \name Action types */
+/*! @{ */
+#define ACTION_WALK 0
+#define ACTION_LOOK 1
+#define ACTION_USE 2
+#define ACTION_USE_WITEM 3
+#define ACTION_TRADE 4
+#define ACTION_ATTACK 5
+#define ACTION_WAND 6
+/*! @} */
 
 extern int HUD_MARGIN_X;
 extern int HUD_MARGIN_Y;
@@ -20,12 +32,12 @@ extern int have_mouse;
 extern float fps_average;
 #endif //!MAP_EDITOR
 
-/*! \name windows handlers 
+/*! \name windows handlers
  * @{ */
 extern int game_root_win; /*!< the root (game) window */
 /*! @} */
 
-/*! \name configuration options 
+/*! \name configuration options
  * @{ */
 extern int use_old_clicker;
 extern int include_use_cursor_on_animals;
@@ -33,6 +45,7 @@ extern int cm_banner_disabled;
 extern int auto_disable_ranging_lock;
 extern int target_close_clicked_creature;
 extern int open_close_clicked_bag;
+extern int show_fps; /*!< flag that indicates whether to display FPS or not */
 /*! @} */
 
 /*!
@@ -89,11 +102,11 @@ Uint8 key_to_char (Uint32 unikey);
  *
  *	The keypress is appended to the string up to the max.  If the key
  * 	press is the backspace chatacter, the last char is removed.
- * 
+ *
  * \retval int 1 if key used, 0 if not used
  *
  */
-int string_input(char *text, size_t maxlen, char ch);
+int string_input(char *text, size_t maxlen, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod);
 
 /*!
  * \ingroup events
@@ -101,11 +114,12 @@ int string_input(char *text, size_t maxlen, char ch);
  *
  *      Checks if a keypress is for quitting the game or toggling the full screen mode.
  *
- * \param key
- * \retval int
+ * \param key_code    The key code as defined by SDL
+ * \param key_mod     Modifier keys pressed in this event
+ * \return 1 if the key event was handled by this function, 0 otherwise
  * \callgraph
  */
-int check_quit_or_fullscreen (Uint32 key);
+int check_quit_or_fullscreen (SDL_Keycode key_code, Uint16 key_mod);
 
 /*!
  * \ingroup events
@@ -113,12 +127,13 @@ int check_quit_or_fullscreen (Uint32 key);
  *
  *      Handles normal characters for the game, console and map windows
  *
- * \param key
- * \param unikey
- * \retval int
+ * \param key_code    The key code as defined by SDL
+ * \param key_unicode Unicode value for the key text, if any
+ * \param key_mod     Modifier keys pressed in this event
+ * \return 1 if the key event was handled by this function, 0 otherwise
  * \callgraph
  */
-int text_input_handler (Uint32 key, Uint32 unikey);
+int text_input_handler (SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod);
 
 /*!
  * \ingroup events
@@ -137,12 +152,13 @@ void switch_action_mode(int mode);
  *
  *      Handles common keyboard events for the root window
  *
- * \param key
- * \param unikey
- * \retval int
+ * \param key_code    The key code as defined by SDL
+ * \param key_unicode Unicode value for the key text, if any
+ * \param key_mod     Modifier keys pressed in this event
+ * \return 1 if the key was handled by this function, 0 otherwise
  * \callgraph
  */
-int keypress_root_common (Uint32 key, Uint32 unikey);
+int keypress_root_common (SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod);
 
 /*!
  * \brief Handles common functions for root window display
@@ -165,12 +181,12 @@ void return_to_gamewin_common(void);
 
 /*!
  * \ingroup events
- * \brief treat key value as if it was a real key press 
+ * \brief treat key value as if it was a real key press
  *
- * \param key
+ * \param key The key to handle
  * \callgraph
  */
-void do_keypress(Uint32 key);
+void do_keypress(el_key_def key);
 
 /*!
  * \ingroup root_window
@@ -183,6 +199,28 @@ void do_keypress(Uint32 key);
  * \callgraph
  */
 void create_game_root_window (int width, int height);
+
+/*!
+ * \brief Return width of the fps text or 0 if disabled.
+ *
+ * \callgraph
+ */
+int get_fps_default_width(void);
+
+/*!
+ * \name game root window action mode access functions
+ */
+/*! @{ */
+void set_gamewin_action_mode(int new_mode);
+int get_gamewin_action_mode(void);
+void save_gamewin_action_mode(void);
+int retrieve_gamewin_action_mode(void);
+static inline int is_gamewin_look_action(void) { return (get_gamewin_action_mode() == ACTION_LOOK); }
+static inline void clear_gamewin_look_action(void) { set_gamewin_action_mode(ACTION_WALK); }
+static inline void set_gamewin_wand_action(void) { save_gamewin_action_mode(); set_gamewin_action_mode(ACTION_WAND); }
+static inline void clear_gamewin_wand_action(void) { if (get_gamewin_action_mode() == ACTION_WAND) set_gamewin_action_mode(retrieve_gamewin_action_mode()); }
+static inline void set_gamewin_usewith_action(void) { set_gamewin_action_mode(ACTION_USE_WITEM); }
+/*! @} */
 
 #ifdef __cplusplus
 } // extern "C"

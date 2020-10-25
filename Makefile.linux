@@ -2,19 +2,49 @@
 
 -include make.conf
 
-# basic compiling and linking - rarely changed
-OPTIONS = -DLINUX -DELC $(foreach FEATURE, $(FEATURES), -D$(FEATURE)) -D_7ZIP_ST $(GIT_VERSION)
-CFLAGS=$(PLATFORM) $(CWARN) -O0 -ggdb -pipe $(OPTIONS) $(shell sdl-config --cflags) $(shell xml2-config --cflags) -fno-strict-aliasing $(EXTRA_INCLUDES)
-_CFLAGS=$(PLATFORM) -O2 -fomit-frame-pointer -ffast-math -pipe $(OPTIONS) $(shell sdl-config --cflags) $(shell xml2-config --cflags) -fno-strict-aliasing $(EXTRA_INCLUDES)
-CXXFLAGS=$(PLATFORM) $(CXXWARN) -O0 -ggdb -pipe $(OPTIONS) $(shell sdl-config --cflags) $(shell xml2-config --cflags) -fno-strict-aliasing $(EXTRA_INCLUDES)
-_CXXFLAGS=$(PLATFORM) -O3 -fomit-frame-pointer -ffast-math -pipe $(OPTIONS) $(shell sdl-config --cflags) $(shell xml2-config --cflags) -fno-strict-aliasing $(EXTRA_INCLUDES)
+TTF_CFLAGS = $(shell pkg-config SDL2_ttf --cflags)
+JSON_FILES_CFLAGS = -I nlohmann_json/single_include/
+ADDRSANITISER_CFLAGS=-fsanitize=address
 
-PNG_SCREENSHOT_LIBS = -lpng
-LDFLAGS=$(shell sdl-config --libs) $(shell xml2-config --libs) -lSDL_net \
-	-lSDL_image -lopenal $(XDIR) -lGL -lGLU -lcal3d -lm $(EXTRA_LIBS) \
-	-lz -lpng -lvorbis -lvorbisfile -lstdc++ -lX11 \
-	$(foreach FEATURE, $(FEATURES), $($(FEATURE)_LIBS))
+PNG_SCREENSHOT_LIBS = $(shell pkg-config libpng --libs)
+TTF_LIBS = $(shell pkg-config SDL2_ttf --libs)
+ADDRSANITISER_LIBS=-fsanitize=address
+
+OPTIONS = -DLINUX -DELC $(foreach FEATURE, $(FEATURES), -D$(FEATURE)) -D_7ZIP_ST $(GIT_VERSION) \
+	$(shell pkg-config sdl2 --cflags) \
+	$(shell pkg-config SDL2_net --cflags) \
+	$(shell pkg-config SDL2_image --cflags) \
+	$(shell pkg-config libxml-2.0 --cflags) \
+	$(shell pkg-config cal3d --cflags) \
+	$(shell pkg-config gl --cflags) \
+	$(shell pkg-config glu --cflags) \
+	$(shell pkg-config openal --cflags) \
+	$(shell pkg-config vorbis --cflags) \
+	$(shell pkg-config vorbisfile --cflags) \
+	$(shell pkg-config zlib --cflags) \
+	$(foreach FEATURE, $(FEATURES), $($(FEATURE)_CFLAGS))
+
+CFLAGS=$(PLATFORM) $(CWARN) -O1 -ggdb -pipe $(OPTIONS) -fno-strict-aliasing $(EXTRA_INCLUDES)
+
+CXXFLAGS=$(PLATFORM) $(CXXWARN) -O1 -ggdb -pipe $(OPTIONS) -fno-strict-aliasing $(EXTRA_INCLUDES)
+
+LDFLAGS=$(shell pkg-config sdl2 --libs) \
+	$(shell pkg-config libxml-2.0 --libs) \
+	$(shell pkg-config SDL2_net --libs) \
+	$(shell pkg-config SDL2_image --libs) \
+	$(shell pkg-config cal3d --libs) \
+	$(shell pkg-config gl --libs) \
+	$(shell pkg-config glu --libs) \
+	$(shell pkg-config openal --libs) \
+	$(shell pkg-config vorbis --libs) \
+	$(shell pkg-config vorbisfile --libs) \
+	$(shell pkg-config zlib --libs) \
+	$(foreach FEATURE, $(FEATURES), $($(FEATURE)_LIBS)) \
+	$(shell pkg-config x11 --libs) -lm -lstdc++
+
+_CFLAGS=$(PLATFORM) -O2 -fomit-frame-pointer -ffast-math -pipe $(OPTIONS) -fno-strict-aliasing $(EXTRA_INCLUDES)
 _LDFLAGS=$(XDIR) -lGL -lpthread -lstdc++
+_CXXFLAGS=$(PLATFORM) -O3 -fomit-frame-pointer -ffast-math -pipe $(OPTIONS) -fno-strict-aliasing $(EXTRA_INCLUDES)
 
 # This works on Ubuntu 8.04 (LTS) at least
 # Install these packages in addition to those required for a standard build
@@ -28,16 +58,14 @@ MEMORY_DEBUG_COBJ = elmemory.o
 PAWN_COBJ = pawn/amx.o pawn/amxaux.o pawn/amxcons.o pawn/amxel.o \
 	pawn/amxfloat.o pawn/amxstring.o pawn/elpawn.o
 CUSTOM_UPDATE_COBJ = custom_update.o new_update.o
-#disabled it for now, made too much trouble
-#FSAA_COBJ = fsaa/fsaa_glx.o fsaa/fsaa.o
-FSAA_COBJ = fsaa/fsaa_dummy.o fsaa/fsaa.o
+FSAA_COBJ = fsaa/fsaa_glx.o fsaa/fsaa.o
 COBJS=2d_objects.o 3d_objects.o \
 	actor_scripts.o actors.o alphamap.o asc.o astrology.o \
-	bbox_tree.o books.o buddy.o buffs.o bags.o \
+	bbox_tree.o buddy.o buffs.o bags.o \
 	cache.o cal.o calc.o chat.o cluster.o colors.o console.o consolewin.o \
 	counters.o cursors.o dds.o ddsimage.o dialogues.o draw_scene.o eye_candy_debugwin.o \
 	el_memory.o elconfig.o elwindows.o encyclopedia.o errors.o events.o	\
-	filter.o font.o framebuffer.o frustum.o gamewin.o gl_init.o 	\
+	filter.o framebuffer.o frustum.o gamewin.o gl_init.o 	\
 	hud.o hud_misc_window.o hud_quickbar_window.o hud_statsbar_window.o hud_quickspells_window.o	\
 	help.o highlight.o ignore.o image_loading.o init.o interface.o items.o io/fileutil.o	\
 	io/e3d_io.o io/elc_io.o	io/map_io.o io/elpathwrapper.o io/xmlcallbacks.o \
@@ -59,13 +87,14 @@ COBJS=2d_objects.o 3d_objects.o \
 	xz/LzmaDec.o xz/LzmaEnc.o xz/Sha256.o xz/Xz.o xz/XzCrc64.o xz/XzDec.o	\
 	xz/XzEnc.o	\
 	$(foreach FEATURE, $(FEATURES), $($(FEATURE)_COBJ))
-	
-CXXOBJS=achievements.o actor_init.o cal3d_wrapper.o command_queue.o \
+
+JSON_FILES_CXXOBJ = json_io.o
+CXXOBJS=achievements.o actor_init.o books.o cal3d_wrapper.o command_queue.o \
 	context_menu.o elloggingwrapper.o engine/logging.o exceptions/extendedexception.o \
-	hud_indicators.o hud_timer.o icon_window.o io/cal3d_io_wrapper.o item_info.o item_lists.o named_colours.o \
-	optimizer.o quest_log.o select.o sendvideoinfo.o trade_log.o user_menus.o \
-	xml/xmlhelper.o eye_candy_wrapper.o \
-	engine/hardwarebuffer.o \
+	font.o hud_indicators.o hud_timer.o icon_window.o io/cal3d_io_wrapper.o item_info.o item_lists.o \
+	named_colours.o password_manager.o optimizer.o quest_log.o select.o \
+	sendvideoinfo.o trade_log.o user_menus.o xml/xmlhelper.o eye_candy_wrapper.o \
+	engine/hardwarebuffer.o xor_cipher.o \
 	eye_candy/eye_candy.o eye_candy/math_cache.o eye_candy/effect_lamp.o \
 	eye_candy/effect_candle.o \
 	eye_candy/effect_campfire.o eye_candy/effect_fountain.o \
@@ -133,9 +162,9 @@ static:
 	@$(MAKE) -f Makefile.linux 'CFLAGS=$(_CFLAGS)' 'CXXFLAGS=$(_CXXFLAGS)' 'LDFLAGS=$(_LDFLAGS)' 'OBJS=$(OBJS) $(STATICLIBS)'
 
 clean:
-	rm -f $(OBJS) $(EXE) 
+	rm -f $(OBJS) $(EXE)
 
-docs:	
+docs:
 	cd docs && doxygen Doxyfile
 
 # define GIT_VERSION if we have a version file
@@ -149,7 +178,7 @@ VERSION = $(shell git describe --abbrev=4 --dirty --always)
 gen_git_version:
 	@echo -n "$(VERSION)" > git_version
 	@echo "New version file: $(VERSION)"
-	@rm -f console.o $(EXE) 
+	@rm -f console.o $(EXE)
 
 .depend: $(foreach HEADER_DIR, $(HEADER_DIRS), $(wildcard $(HEADER_DIR)/*.h))
 	$(CC) $(CFLAGS) -MM $(patsubst %.o, %.c, $(COBJS)) >.depend

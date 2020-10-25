@@ -1,44 +1,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <SDL_syswm.h>
+#include "elloggingwrapper.h"
+#include "gl_init.h"
 #include "paste.h"
 #include "chat.h"
+#include "text.h"
 #include "translate.h"
 
 void do_paste(const Uint8* buffer)
 {
 	paste_in_input_field(buffer);
-}
-
-void do_paste_to_text_field(widget_list *widget, const char* text)
-{
-	text_field *tf;
-	int bytes = strlen(text);
-	text_message* msg;
-	int p;
-
-	if ((widget == NULL) || (widget->widget_info == NULL))
-		return;
-
-	// if not editable, don't allow paste
-	if (!(widget->Flags & TEXT_FIELD_EDITABLE))
-		return;
-
-	tf = (text_field *) widget->widget_info;
-	msg = &tf->buffer[tf->msg];
-
-	// if can't grow and would over fill, just use what we can
-	if ((msg->len + bytes >= msg->size) && !(widget->Flags & TEXT_FIELD_CAN_GROW))
-		bytes = msg->size - msg->len - 1;
-
-	resize_text_message_data (msg, msg->len + bytes);
-
-	p = tf->cursor;
-	memmove (&msg->data[p + bytes], &msg->data[p], msg->len - p + 1);
-	memcpy (&msg->data[p], text, bytes);
-	msg->len += bytes;
-	tf->cursor += bytes;
-	text_field_find_cursor_line (tf);
 }
 
 #if defined OSX
@@ -55,7 +27,7 @@ void start_paste(widget_list *widget)
 	//require_noerr( err, CantCreateClipboard );
 
   	err = PasteboardGetItemIdentifier( gClipboard, 1, &itemID );
-	err = PasteboardCopyItemFlavorData( gClipboard, itemID, CFSTR("com.apple.traditional-mac-plain-text"), &flavorData );
+	err = PasteboardCopyItemFlavorData( gClipboard, itemID, CFSTR("public.utf8-plain-text"), &flavorData );
 
 	int flavorDataSize = CFDataGetLength(flavorData);
 	flavorText=(char*)malloc(flavorDataSize+1);
@@ -74,7 +46,7 @@ void start_paste(widget_list *widget)
 	}
 	else
 	{
-		do_paste_to_text_field(widget, flavorText);
+		widget_handle_paste(widget, flavorText);
 	}
 
 	free(flavorText);
@@ -95,7 +67,7 @@ void copy_to_clipboard(const char* text)
 
 	// add text data to the pasteboard
 	err = PasteboardPutItemFlavor( gClipboard, (PasteboardItemID)1,
-		CFSTR("com.apple.traditional-mac-plain-text"), textData, 0 );
+		CFSTR("public.utf8-plain-text"), textData, 0 );
 	CFRelease(textData);
 	CFRelease( gClipboard );
 }
@@ -107,14 +79,26 @@ void start_paste(widget_list *widget)
 	if (OpenClipboard(NULL))
 	{
 		HANDLE hText = GetClipboardData (CF_TEXT);
-		char* text = GlobalLock (hText);
-		if (widget == NULL)
-			do_paste(text);
+		if (hText != NULL)
+		{
+			char* text = GlobalLock (hText);
+			if (text != NULL)
+			{
+				if (widget == NULL)
+					do_paste((Uint8 *)text);
+				else
+					widget_handle_paste(widget, text);
+			}
+			else
+				LOG_TO_CONSOLE(c_red3, "Paste error: GlobalLock()");
+			GlobalUnlock (hText);
+		}
 		else
-			do_paste_to_text_field(widget, text);
-		GlobalUnlock (hText);
+			LOG_TO_CONSOLE(c_red3, "Paste error: GetClipboardData()");
 		CloseClipboard ();
 	}
+	else
+		LOG_TO_CONSOLE(c_red3, "Paste error: OpenClipboard()");
 }
 
 void copy_to_clipboard(const char* text)
@@ -125,9 +109,9 @@ void copy_to_clipboard(const char* text)
 		return;
 
 	SDL_VERSION (&info.version);
-	if (SDL_GetWMInfo (&info))
+	if (SDL_GetWindowWMInfo (el_gl_window, &info))
 	{
-		if (OpenClipboard (info.window))
+		if (OpenClipboard (info.info.win.window))
 		{
 			HGLOBAL hCopy = GlobalAlloc (GMEM_MOVEABLE, 1+strlen (text));
 			char* copy = GlobalLock (hCopy);
@@ -174,7 +158,7 @@ void processpaste(Display *dpy, Window window, Atom atom)
 		}
 		else
 		{
-			do_paste_to_text_field(paste_to_widget, (const char*) value);
+			widget_handle_paste(paste_to_widget, (const char*) value);
 			paste_to_widget = NULL;
 		}
 	}
@@ -194,10 +178,8 @@ static void start_paste_from_target(widget_list *widget, int clipboard)
 	Atom property;
 
 	SDL_VERSION(&wminfo.version);
-	if (SDL_GetWMInfo(&wminfo) && wminfo.subsystem == SDL_SYSWM_X11)
+	if (SDL_GetWindowWMInfo(el_gl_window, &wminfo) && wminfo.subsystem == SDL_SYSWM_X11)
 	{
-		wminfo.info.x11.lock_func();
-
 		dpy = wminfo.info.x11.display;
 		window = wminfo.info.x11.window;
 
@@ -225,7 +207,6 @@ static void start_paste_from_target(widget_list *widget, int clipboard)
 		// //if(clipboard) {
 		//	processpaste(dpy, window, property);
 		//}
-		wminfo.info.x11.unlock_func();
 	}
 }
 
@@ -247,10 +228,8 @@ static void copy_to_clipboard_target(const char* text, int clipboard)
 	Atom selection;
 
 	SDL_VERSION(&wminfo.version);
-	if (SDL_GetWMInfo(&wminfo) && (wminfo.subsystem == SDL_SYSWM_X11))
+	if (SDL_GetWindowWMInfo(el_gl_window, &wminfo) && wminfo.subsystem == SDL_SYSWM_X11)
 	{
-		wminfo.info.x11.lock_func();
-
 		dpy = wminfo.info.x11.display;
 		window = wminfo.info.x11.window;
 
@@ -271,7 +250,6 @@ static void copy_to_clipboard_target(const char* text, int clipboard)
 		}
 		//property = XInternAtom(dpy, "PASTE", 0);
 		XSetSelectionOwner(dpy, selection, window, CurrentTime);
-		wminfo.info.x11.unlock_func();
 	}
 }
 
@@ -332,10 +310,8 @@ void finishpaste(XSelectionEvent event)
 	SDL_SysWMinfo wminfo;
 
 	SDL_VERSION(&wminfo.version);
-	if (SDL_GetWMInfo(&wminfo) && wminfo.subsystem==SDL_SYSWM_X11)
+	if (SDL_GetWindowWMInfo(el_gl_window, &wminfo) && wminfo.subsystem == SDL_SYSWM_X11)
 	{
-		wminfo.info.x11.lock_func();
-
 		dpy=wminfo.info.x11.display;
 		window=wminfo.info.x11.window;
 
@@ -345,8 +321,27 @@ void finishpaste(XSelectionEvent event)
 			return;
 		}
 		processpaste(dpy, window, event.property);
-		wminfo.info.x11.unlock_func();
 	}
+}
+
+//	On some configurations, X11 error are not caught and so stop the client
+//	We can catch them and just log the error
+//
+static int error_handler(Display *display, XErrorEvent *error)
+{
+	const size_t buf_len = 200;
+	char *buffer = calloc(buf_len + 1, sizeof(char));
+	if (buffer == NULL)
+		return 0;
+	XGetErrorText(display, error->error_code, buffer, buf_len);
+	LOG_ERROR("X11 error code (%d): [%s]", error->error_code, buffer);
+	free(buffer);
+	return 0;
+}
+
+void init_x11_copy_paste(void)
+{
+	XSetErrorHandler(error_handler);
 }
 
 #endif // def OSX / def WINDOWS / other

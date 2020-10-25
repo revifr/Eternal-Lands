@@ -65,6 +65,16 @@ void log_error(const char* file, const Uint32 line, const char* message, ...);
 /**
  * @ingroup logging
  *
+ * Logs the given error to a simple SDL window.
+ * @param file File of the error.
+ * @param line Line of the error.
+ * @param message Error message.
+ */
+void fatal_error_window(const char* file, const Uint32 line, const char* message, ...);
+
+/**
+ * @ingroup logging
+ *
  * Logs the given warning.
  * @param file File of the warning.
  * @param line Line of the warning.
@@ -136,27 +146,26 @@ int command_log_level(char *text, int len);
 
 void init_thread_log(const char* name);
 
-#define LOG_ERROR(msg, args ...) log_error(__FILE__, __LINE__, msg, ## args)
-#define LOG_WARNING(msg, args ...) log_warning(__FILE__, __LINE__, msg,	\
-	## args)
-#define LOG_INFO(msg, args ...) log_info(__FILE__, __LINE__, msg, ## args)
+#define FATAL_ERROR_WINDOW(msg, ...) fatal_error_window(__FILE__, __LINE__, msg, ##__VA_ARGS__)
+#define LOG_ERROR(msg, ...) log_error(__FILE__, __LINE__, msg, ##__VA_ARGS__)
+#define LOG_WARNING(msg, ...) log_warning(__FILE__, __LINE__, msg, ##__VA_ARGS__)
+#define LOG_INFO(msg, ...) log_info(__FILE__, __LINE__, msg, ##__VA_ARGS__)
 #ifdef FASTER_MAP_LOAD
-#define LOG_DEBUG(msg, args ...)\
+#define LOG_DEBUG(msg, ...)\
 	do\
 	{\
 		if (get_log_level() >= llt_debug)\
-			log_debug(__FILE__, __LINE__, msg, ## args);\
+			log_debug(__FILE__, __LINE__, msg, ##__VA_ARGS__);\
 	} while(0)
-#define LOG_DEBUG_VERBOSE(msg, args ...)\
+#define LOG_DEBUG_VERBOSE(msg, ...)\
 	do\
 	{\
 		if (get_log_level() >= llt_debug_verbose)\
-			log_debug_verbose(__FILE__, __LINE__, msg, ## args);\
+			log_debug_verbose(__FILE__, __LINE__, msg, ##__VA_ARGS__);\
 	} while(0)
 #else  // FASTER_MAP_LOAD
-#define LOG_DEBUG(msg, args ...) log_debug(__FILE__, __LINE__, msg, ## args)
-#define LOG_DEBUG_VERBOSE(msg, args ...) log_debug_verbose(__FILE__,	\
-	__LINE__, msg, ## args)
+#define LOG_DEBUG(msg, ...) log_debug(__FILE__, __LINE__, msg, ##__VA_ARGS__)
+#define LOG_DEBUG_VERBOSE(msg, ...) log_debug_verbose(__FILE__, __LINE__, msg, ##__VA_ARGS__)
 #endif // FASTER_MAP_LOAD
 #define ENTER_DEBUG_MARK(name) enter_debug_mark(__FILE__, __LINE__, name)
 #define LEAVE_DEBUG_MARK(name) leave_debug_mark(__FILE__, __LINE__, name)

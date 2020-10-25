@@ -6,7 +6,7 @@
 #include "actors.h"
 #include "asc.h"
 #include "init.h"
-#include "interface.h"
+#include "loginwin.h"
 #include "multiplayer.h"
 #include "translate.h"
 #include "url.h"
@@ -19,7 +19,7 @@ char afk_message[MAX_TEXT_MESSAGE_LENGTH]={0};
 char afk_title[101];
 int afk_local = 0;
 
-static struct pm_struct pm_log;
+static struct pm_struct pm_log = {0, 0, NULL};
 
 void print_return_message(void);    /* forward declaration */
 
@@ -30,7 +30,6 @@ void free_pm_log()
 	while (pm_log.ppl > 0)
 	{
 		--pm_log.ppl;
-		pm_log.afk_msgs[pm_log.ppl].msgs = 0;
 		free(pm_log.afk_msgs[pm_log.ppl].name);
 		pm_log.afk_msgs[pm_log.ppl].name = NULL;
 		for(i = pm_log.afk_msgs[pm_log.ppl].msgs - 1; i >= 0; --i)
@@ -38,10 +37,13 @@ void free_pm_log()
 			free(pm_log.afk_msgs[pm_log.ppl].messages[i]);
 			pm_log.afk_msgs[pm_log.ppl].messages[i] = NULL;
 		}
+		free(pm_log.afk_msgs[pm_log.ppl].messages);
+		pm_log.afk_msgs[pm_log.ppl].msgs = 0;
 	}
-	free(pm_log.afk_msgs);
+	if (pm_log.afk_msgs != NULL)
+		free(pm_log.afk_msgs);
 	pm_log.afk_msgs = NULL;
-	pm_log.msgs = 0;
+	pm_log.msgs = pm_log.ppl = 0;
 }
 
 void go_afk()
@@ -217,9 +219,8 @@ int my_namecmp(char *check)
 {
 	int i=0;
 	char username[32];
-	safe_strncpy(username, username_str, sizeof(username));
-	my_tolower(username);
-	
+	safe_strncpy(username, get_lowercase_username(), sizeof(username));
+
 	for(;i<20 && username[i] && check[i]==username[i];i++);
 	if(check[i]==username[i]||((check[i]==' '||!isalpha((unsigned char)check[i])) && !username[i])) return 0;
 	return 1;
@@ -276,10 +277,10 @@ void send_afk_message (const char *server_msg, int len, Uint8 channel)
 			name[i++] = server_msg[j];
 			if (server_msg[j] == ':' || server_msg[j] == ' ') break;
 			j++;
-		}		
-		name[i-1] = '\0';
+		}
+		name[(i > 0) ?i-1 : 0] = '\0';
 		
-		if (have_name(name, i-1) < 0)
+		if (i > 1 && have_name(name, i-1) < 0)
 		{
 			safe_snprintf ((char*)sendtext, sizeof(sendtext), "%c%s %s", SEND_PM, name, afk_message);
 		}

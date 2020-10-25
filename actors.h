@@ -28,11 +28,11 @@ extern "C" {
 #define	MAX_FILE_PATH	128	// the max chars allowed int a path/filename for actor textures/masks
 #define MAX_ACTOR_DEFS  256
 #define MAX_ACTORS      1000    /*!< The maximum number of actors the client can hold */
+#define ACTOR_DEF_NAME_SIZE 256
 
 extern int yourself; 	/*!< This variable holds the actor_id (as the server sees it, not the position in the actors_list) of your character.*/
 extern int you_sit; 	/*!< Specifies if you are currently sitting down.*/
 extern int sit_lock; 	/*!< The sit_lock variable holds you in a sitting position.*/
-extern float name_zoom; /*!< The name_zoom defines how large the text used for drawing the names should be*/
 extern int use_alpha_banner;	/*!< Use_alpha_banner defines if an alpha background is drawn behind the name/health banner.*/
 
 /*!
@@ -584,7 +584,7 @@ typedef struct
 	char remapped_colors;	/*!< If the actors colours are remapped it will holds the texture in actor->texture_id*/
 	GLuint texture_id;			/*!< Sets the texture ID, if the remapped_colors==1 - remember to glDeleteTextures*/
 	char skin_name[256];	/*!< Sets the skin name*/
-	char actor_name[256];	/*!< Sets the actors name - holds the guild name as well after a special 127+color character*/
+	char actor_name[ACTOR_DEF_NAME_SIZE];	/*!< Sets the actors name - holds the guild name as well after a special 127+color character*/
 	/*! \} */
 
 	/*! \name Command queue and current animations*/
@@ -681,7 +681,7 @@ extern attached_actors_types attached_actors_defs[MAX_ACTOR_DEFS]; /*!< The defi
 static __inline__ int is_actor_barehanded(actor *act, int hand){
 	if(hand==EMOTE_BARE_L)
 		return (act->cur_shield==SHIELD_NONE||act->cur_shield==QUIVER_ARROWS||act->cur_shield==QUIVER_BOLTS);
-	else 
+	else
 		return (act->cur_weapon==WEAPON_NONE||act->cur_weapon==GLOVE_FUR||act->cur_weapon==GLOVE_LEATHER);
 }
 
@@ -738,7 +738,7 @@ void add_actor_from_server (const char * in_data, int len);
 extern void	init_actors_lists();
 
 #ifdef MUTEX_DEBUG
-extern Uint32 have_actors_lock;
+extern SDL_threadID have_actors_lock;
 /*!
  * \ingroup mutex
  * \name Actor list thread synchronization
@@ -747,14 +747,14 @@ extern Uint32 have_actors_lock;
 #define	LOCK_ACTORS_LISTS() 	\
 	{\
 		fprintf(stderr,"Last locked by: %s %s %d\n",__FILE__,__FUNCTION__,__LINE__);\
-		if(SDL_LockMutex(actors_lists_mutex)==-1) {fprintf(stderr,"We're fucked!! The mutex on %s %s %d was not locked even though we asked it to!\n",__FILE__,__FUNCTION__,__LINE__); abort(); }\
+		if(SDL_LockMutex(actors_lists_mutex)==-1) {fprintf(stderr,"The mutex on %s %s %d was not locked even though we asked it to!\n",__FILE__,__FUNCTION__,__LINE__); abort(); }\
 		assert(have_actors_lock==0); have_actors_lock=SDL_ThreadID(); \
 	}
 #define	UNLOCK_ACTORS_LISTS() 	\
 	{\
 		fprintf(stderr,"Last unlocked by: %s %s %d\n",__FILE__,__FUNCTION__,__LINE__);\
 		assert(have_actors_lock); assert(have_actors_lock==SDL_ThreadID()); have_actors_lock=0; \
-		if(SDL_UnlockMutex(actors_lists_mutex)==-1)  {fprintf(stderr,"We're fucked!! The mutex on %s %s %d was not unlocked even though we asked it to!\n",__FILE__,__FUNCTION__,__LINE__); abort(); }\
+		if(SDL_UnlockMutex(actors_lists_mutex)==-1)  {fprintf(stderr,"The mutex on %s %s %d was not unlocked even though we asked it to!\n",__FILE__,__FUNCTION__,__LINE__); abort(); }\
 	}
 /*! @} */
 #else
@@ -875,6 +875,27 @@ void get_actor_rotation_matrix(actor *in_act, float *out_rot);
 void transform_actor_local_position_to_absolute(actor *in_act, float *in_local_pos, float *in_act_rot, float *out_pos);
 
 void draw_actor_without_banner(actor * actor_id, Uint32 use_lightning, Uint32 use_textures, Uint32 use_glow);
+
+/*!
+ * \brief Remember this last summoned creature.
+ *
+ * \param summoned_name The name of the summoned creature
+ */
+void remember_new_summoned(const char *summoned_name);
+
+/*!
+ * \brief Check if a new actor is the last summoned by the player.  The actor mutex must be already held.
+ *
+ * \param new_actor Pointer to the new actor
+ */
+void check_if_new_actor_last_summoned(actor *new_actor);
+
+/*!
+ * \brief Get the actor ID of the last summoned creature
+ *
+ * \return The id or -1 of none remembered or no longer present.
+ */
+int get_id_last_summoned(void);
 
 static __inline__ int is_actor_held(actor *act)
 {

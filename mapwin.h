@@ -10,11 +10,6 @@
 extern "C" {
 #endif
 
-/*! \name windows handlers 
- * @{ */
-extern int map_root_win; /*!< handler for the map window */
-/*! @} */
-
 /*!
  * Stores the position and the text for markings on the map.
  * \todo this struct should be moved to some place where it belongs, like map.h or sector.h
@@ -28,6 +23,7 @@ typedef struct
     /*! @} */
     char text[512]; /*!< text of the marking */
     char server_side;
+    int server_side_id;
     int r,g,b; //color of the marker
 }marking;
 
@@ -42,8 +38,6 @@ extern int temp_tile_map_size_y; /*!< The tile map size in the y direction */
 extern marking marks[MAX_MARKINGS]; /*!< a global array of marks */
 extern marking temp_marks[MAX_USER_MARKS]; /*!< a global array of temporary marks */
 extern int curmark_r,curmark_g,curmark_b; //current mark color
-
-extern int reload_tab_map; /*!< flag that indicates the tabmap needs to be reloaded */
 
 /*!
  * \ingroup interface_map

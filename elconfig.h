@@ -13,9 +13,6 @@
 extern "C" {
 #endif
 
-extern int elconfig_win;
-extern int elconfig_menu_x;
-extern int elconfig_menu_y;
 extern float water_tiles_extension;
 extern int show_game_seconds;
 extern int skybox_update_delay;
@@ -29,8 +26,41 @@ extern Uint32 max_actor_texture_handles;
 
 extern int write_ini_on_exit; /*< variable that determines if el.ini file is rewritten on exit of the program */
 
-extern int gx_adjust;
-extern int gy_adjust;
+extern int video_mode_set;
+extern int no_adjust_shadows;
+extern int clouds_shadows; /*!< flag that indicates whether the shadows of clouds should be displayed or not */
+extern int item_window_on_drop;
+extern int mouse_limit;
+extern int isometric; /*!< use isometric instead of perspective view */
+extern int poor_man; /*!< this flag, if set to true, indicates we are running on a really poor machine */
+extern int limit_fps; /*!< the configured max FPS number we should use. If this is 0, the highest possible number will be used. */
+extern int max_fps; /*!< the current max fps to use, normally the same as limit_fps, set low when window is not active to reduce processing */
+extern int special_effects; /*!< flag indicating whether pretty spell effects should be enabled */
+extern int show_reflection; /*!< flag that indicates whether to display reflections or not */
+extern char lang[10]; /*!< contains the identifier for the current language. \todo Shouldn't this go into translate.h? */
+extern int auto_update; /*!<this flags signals whether or not autoupdates are performed at startup, or not. It requires a restart to have an effect. */
+extern int buddy_log_notice; /*!< whether to log buddy logged on/off notices to screen */
+extern int clear_mod_keys_on_focus; /*!< trouble shooting option to force mod keys up when gaining focus */
+
+#if !defined(WINDOWS) && !defined(OSX)
+extern int use_clipboard; /*!< whether to use CLIPBOARD or PRIMARY for pasting */
+#endif
+
+#ifdef  CUSTOM_UPDATE
+extern int custom_update; /*!<this flags signals whether or not autoupdates of custom looks is permitted. */
+extern int custom_clothing; /*!<this flags signals whether or not custom is displayed. */
+#endif  //CUSTOM_UPDATE
+
+#ifdef OSX
+extern int square_buttons; /* flag to overcome intel opengl issues on early MacBooks*/
+#endif
+
+#ifdef DEBUG
+extern int render_skeleton;
+extern int render_mesh;
+extern int render_bones_id;
+extern int render_bones_orientation;
+#endif
 
 /*!
  * The different kinds of options
@@ -62,13 +92,56 @@ typedef enum
 	IN_GAME_VAR		/*!< for names of variables changed in the games */
 } var_name_type;
 
-void display_elconfig_win(void);
-
 int get_rotate_chat_log(void);
 
 void change_language(const char *new_lang);
 
-extern float get_global_scale(void);
+void check_for_config_window_scale(void);
+
+/*!
+ * \ingroup config
+ * \brief   change the custom scale value for the window by the step value
+ *
+ * \param increase                          if true, the value is increase by the step, otherwise it is decreased by the step
+ * \param changed_window_custom_scale       pointer to the custom scale variable for the window
+ *
+ * \callgraph
+*/
+void step_win_scale_factor(int increase, float *changed_window_custom_scale);
+
+/*!
+ * \ingroup config
+ * \brief   limit the custom scale value for the window to the default
+ *
+ * \param changed_window_custom_scale       pointer to the custom scale variable for the window
+ *
+ * \callgraph
+*/
+void limit_win_scale_to_default(float *changed_window_custom_scale);
+
+/*!
+ * \ingroup config
+ * \brief   set the custom scale value for the window to the default or initial starting value
+ *
+ * \param set_default                       if true, the value is set to the default, otherwise it is set to the initial starting value
+ * \param changed_window_custom_scale       pointer to the custom scale variable for the window
+ *
+ * \callgraph
+*/
+void reset_win_scale_factor(int set_default, float *changed_window_custom_scale);
+
+void update_highdpi_auto_scaling(void);
+
+float get_global_scale(void);
+
+#ifdef JSON_FILES
+void set_ready_for_user_files(void);
+int get_use_json_user_files(void);
+void load_character_options(void);
+void save_character_options(void);
+#define USE_JSON_DEBUG(message) {}
+//#define USE_JSON_DEBUG(message) {printf("%s:%d %s\n", __FUNCTION__, __LINE__, message);}
+#endif
 
 /*!
  * \ingroup config
@@ -105,7 +178,7 @@ int check_var(char * str, var_name_type type);
  *
  * \callgraph
  */
-void init_vars();
+void init_vars(void);
 
 /*!
  * \ingroup other
@@ -115,7 +188,7 @@ void init_vars();
  *
  * \sa start_rendering
  */
-void free_vars();
+void free_vars(void);
 
 /*!
  * \ingroup config
@@ -126,7 +199,7 @@ void free_vars();
  * \retval int      0 if reading fails, 1 if successful
  *
  */
-int read_el_ini ();
+int read_el_ini(void);
 
 /*!
  * \ingroup config
@@ -137,7 +210,7 @@ int read_el_ini ();
  * \retval int      0 if writing fails, 1 if successful
  *
  */
-int write_el_ini ();
+int write_el_ini(void);
 
 /*!
  * \ingroup other
@@ -147,7 +220,7 @@ int write_el_ini ();
  *
  * \callgraph
  */
-void check_options();
+void check_options(void);
 
 /*!
  * \ingroup other
@@ -159,16 +232,51 @@ void check_options();
  */
 void change_windows_on_top(int *var);
 
+#ifndef MAP_EDITOR
 /*!
- * \ingroup other
+ * \ingroup config
  * \brief   Adds another option to a multi-var.
  *
- *      Adds another option to a multi-var selection list.
+ * Adds an option with identifier \a id and label \a str to the multi-var
+ * selection list for variable \a name. If the parameter \a add_button is
+ * non-zero, and the widget for the variable exsists, a button will also be
+ * added to this widget.
  *
  * \param name       the name of the variable to add to
- * \param str      the text for the option
+ * \param str        the text for the option
+ * \param id         an optional key for the option
+ * \param add_button if non-zero, add a button to the widget for the option
  */
-void add_multi_option(char * name, char * str);
+void add_multi_option_with_id(const char* name, const char* str, const char* id, int add_button);
+static __inline__ void add_multi_option(const char* name, const char* str)
+{
+	add_multi_option_with_id(name, str, NULL, 0);
+}
+/*!
+ * \ingroup config
+ *
+ * Clear a multi-var.
+ *
+ * Remove all options from the multi-select variable with name \a name.
+ *
+ * \param name the name of the variable to clear
+ */
+void clear_multiselect_var(const char* name);
+/*!
+ * \ingroup config
+ *
+ * Set a multi-var.
+ *
+ * Set the selected option in multi-select variable \a name to \a idx. If the
+ * parameter \a change_button is non-zero, the corresponding button in the
+ * widget is also selected.
+ *
+ * \param name          the name of the variable to set
+ * \param idx           the index of the element to select
+ * \param change_button if non-zero, select GUI button as well
+ */
+void set_multiselect_var(const char* name, int idx, int change_button);
+#endif // !MAP_EDITOR
 
 void change_windowed_chat (int *wc, int val);
 
@@ -194,15 +302,47 @@ int toggle_OPT_BOOL_by_name(const char *str);
  * \ingroup other
  * brief Sets the specfied OPT_INT variable's value.
  * \param str	the option name
- * \param new_vale well, the new value
+ * \param new_value well, the new value
  * \retval	1 if sucessfull, 0 if option not found
  */
 int set_var_OPT_INT(const char *str, int new_value);
+
+/*!
+ * \ingroup config
+ * brief Restore the video mode to that when the client was started.
+ */
+void restore_starting_video_mode(void);
+
+/*!
+ * \ingroup config
+ * brief Save the current client window size as user defined mode.
+ */
+void set_user_defined_video_mode(void);
+
 #endif
 
 void toggle_follow_cam(int * fc);
 void toggle_ext_cam(int * ec);
 void options_loaded(void);
+
+
+/*!
+ * \ingroup other
+ * Set previously stored multi-select variables.
+ *
+ * Some multi-select variables cannot be reliably set because they are not fully
+ * initialized before el.ini is read. The values for these variables are stored,
+ * and the variables are set to the correct option afterwards using this function.
+ * The initialization is done as follows:
+ * 1. if only an index is stored, and it is a valid index, that is used.
+ * 2. if both an index and a value are stored, the value overrides the index,
+ *    and the option with correct value is selected if it can be found.
+ * 3. if no valid value is found, or the value is empty and the index is invalid,
+ *    the option is left unchanged, and nothing is done.
+ * This function assumes all necessary initialization is done when it is called,
+ * and therefore deletes all deferred options.
+ */
+void check_deferred_options();
 
 #ifdef __cplusplus
 } // extern "C"

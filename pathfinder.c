@@ -15,7 +15,7 @@ int pf_follow_path = 0;
 static PF_OPEN_LIST pf_open;
 static PF_TILE *pf_src_tile, *pf_cur_tile;
 static int pf_visited_squares[20];
-static SDL_TimerID pf_movement_timer = NULL;
+static SDL_TimerID pf_movement_timer = 0;
 
 #define PF_DIFF(a, b) ((a > b) ? a - b : b - a)
 #define PF_HEUR(a, b) pf_heuristic(a->x-b->x, a->y-b->y);
@@ -220,7 +220,7 @@ void pf_destroy_path()
 	if (pf_movement_timer)
 	{
 		SDL_RemoveTimer(pf_movement_timer);
-		pf_movement_timer = NULL;
+		pf_movement_timer = 0;
 	}
 	pf_follow_path = 0;
 	for (i = 0; i < 20; i++)
@@ -361,24 +361,19 @@ int pf_get_mouse_position(int mouse_x, int mouse_y, int * px, int * py)
 
 int pf_get_mouse_position_extended(int mouse_x, int mouse_y, int * px, int * py, int tile_x, int tile_y)
 {
-	int min_mouse_x = (window_width-hud_x)/6;
-	int min_mouse_y = 0;
+	int screen_map_width = main_map_screen_x_right - main_map_screen_x_left;
+	int screen_map_height = main_map_screen_y_bottom - main_map_screen_y_top;
 
-	int max_mouse_x = min_mouse_x+((window_width-hud_x)/1.5);
-	int max_mouse_y = window_height - hud_y;
-
-	int screen_map_width = max_mouse_x - min_mouse_x;
-	int screen_map_height = max_mouse_y - min_mouse_y;
-
-	if (mouse_x < min_mouse_x
-	|| mouse_x > max_mouse_x
-	|| mouse_y < min_mouse_y
-	|| mouse_y > max_mouse_y) {
+	if (mouse_x < main_map_screen_x_left
+		|| mouse_x > main_map_screen_x_right
+		|| mouse_y < main_map_screen_y_top
+		|| mouse_y > main_map_screen_y_bottom)
+	{
 		return 0;
 	}
 
-	*px = ((mouse_x - min_mouse_x) * tile_x * 6) / screen_map_width;
-	*py = (tile_y * 6) - ((mouse_y * tile_y * 6) / screen_map_height);
+	*px = ((mouse_x - main_map_screen_x_left) * tile_x * 6) / screen_map_width;
+	*py = (tile_y * 6) - ((mouse_y - main_map_screen_y_top) * tile_y * 6) / screen_map_height;
 	return 1;
 }
 

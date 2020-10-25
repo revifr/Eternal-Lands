@@ -1,5 +1,6 @@
 #ifdef GTK2
 
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #include <gdk/gdkkeysyms.h>
 #include <gtk/gtk.h>
 #include "../platform.h"
@@ -17,7 +18,6 @@ char obj_2d_folder[256];
 char obj_3d_folder[256];
 char particles_folder[256];
 
-char * selected_file = NULL;
 GtkWidget * gtk_open_win = NULL;
 GtkWidget * gtk_save_win = NULL;
 GtkWidget * gtk_effect_win = NULL;
@@ -43,36 +43,36 @@ GtkFileFilter * map_filter = NULL;
 GtkFileFilter * part_filter = NULL;
 
 void init_filters()
-{	
+{
 	e3d_filter=gtk_file_filter_new();
 	gtk_file_filter_set_name(e3d_filter, "3D object");
 	gtk_file_filter_add_pattern(e3d_filter, "*.e3d");
 	gtk_file_filter_add_pattern(e3d_filter, "*.e3d.gz");
-	
+
 	e2d_filter=gtk_file_filter_new();
 	gtk_file_filter_set_name(e2d_filter, "2D object");
 	gtk_file_filter_add_pattern(e2d_filter, "*.2d0");
-	
+
 	map_filter=gtk_file_filter_new();
 	gtk_file_filter_set_name(map_filter, "Map file");
 	gtk_file_filter_add_pattern(map_filter, "*.gz");
 	gtk_file_filter_add_pattern(map_filter, "*.elm");
 	gtk_file_filter_add_pattern(map_filter, "*.elm.gz");
-	
+
 	part_filter=gtk_file_filter_new();
 	gtk_file_filter_set_name(part_filter, "Particle file");
 	gtk_file_filter_add_pattern(part_filter, "*.part");
-	
+
 	//Now set the correct dir names
 	strcpy(obj_3d_folder, datadir);
 	strcat(obj_3d_folder, "/3dobjects/");
 
 	strcpy(obj_2d_folder, datadir);
 	strcat(obj_2d_folder, "/2dobjects/");
-	
+
 	strcpy(map_folder, datadir);
 	strcat(map_folder, "/maps/");
-	
+
 	strcpy(particles_folder, datadir);
 	strcat(particles_folder, "/particles/");
 }
@@ -95,25 +95,25 @@ void open_button_clicked()
 	selected_file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(gtk_open_win));
 	if(selected_file){
 		//What should we do next...
-		if((point)filter==(point)map_filter){
+		if((uintptr_t)filter==(uintptr_t)map_filter){
 			strcpy(map_file_name, selected_file);
 			copy_folder(map_folder, selected_file);
 			open_map_file_continued();
-		} else if((point)filter==(point)e3d_filter){
+		} else if((uintptr_t)filter==(uintptr_t)e3d_filter){
 			copy_folder(obj_3d_folder, selected_file);
 			open_3d_obj_continued();
-		} else if((point)filter==(point)e2d_filter){
+		} else if((uintptr_t)filter==(uintptr_t)e2d_filter){
 			copy_folder(obj_2d_folder, selected_file);
 			open_2d_obj_continued();
-		} else if((point)filter==(point)part_filter){
+		} else if((uintptr_t)filter==(uintptr_t)part_filter){
 			strcpy(particle_file_name, selected_file);
 			copy_folder(particles_folder, selected_file);
 			open_particles_obj_continued();
 		}
-		
+
 		g_free(selected_file);
 	}
-	
+
 	gtk_widget_hide(gtk_open_win);
 }
 
@@ -122,24 +122,38 @@ void hide_open_win(GtkWidget * widget, GtkWidget * win)
 	gtk_widget_hide(win);
 }
 
+static void open_check_escape(GtkWidget *widget, GdkEventKey *event, gpointer data)
+{
+	if (gtk_open_win && event->keyval == GDK_KEY_Escape)
+		gtk_widget_hide(gtk_open_win);
+}
+
+static void open_kill_window(GtkWidget *widget, GdkEvent *event, gpointer data)
+{
+	if (gtk_open_win)
+		gtk_widget_hide(gtk_open_win);
+}
+
 void show_open_window(char * name, char * folder, GtkFileFilter * filter)
 {
 	if(!gtk_open_win) {
 		GList *buttons;
 		GtkWidget *cancel, *ok_button;
-		
-		gtk_open_win=gtk_file_chooser_dialog_new(name, NULL, GTK_FILE_CHOOSER_ACTION_OPEN, 
+
+		gtk_open_win=gtk_file_chooser_dialog_new(name, NULL, GTK_FILE_CHOOSER_ACTION_OPEN,
 				GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL, //Cancel button
 				GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT,//Open button
 				NULL);
-		
+
 		buttons=((GtkHButtonBox*)(((GtkDialog*)gtk_open_win)->action_area))->button_box.box.children;
 		cancel=((GtkBoxChild*)buttons->data)->widget;
 		ok_button=((GtkBoxChild*)buttons->next->data)->widget;
 
 		g_signal_connect ((gpointer) cancel, "clicked", G_CALLBACK (hide_open_win), gtk_open_win);
 		g_signal_connect ((gpointer) ok_button, "clicked", G_CALLBACK (open_button_clicked), NULL);
-		
+		g_signal_connect(gtk_open_win, "key_press_event", G_CALLBACK(open_check_escape), NULL);
+		g_signal_connect(gtk_open_win, "delete_event", G_CALLBACK(open_kill_window), NULL);
+
 		gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(gtk_open_win), e3d_filter);
 		gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(gtk_open_win), e2d_filter);
 		gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(gtk_open_win), map_filter);
@@ -148,10 +162,10 @@ void show_open_window(char * name, char * folder, GtkFileFilter * filter)
 	} else {
 		gtk_window_set_title(GTK_WINDOW(gtk_open_win), name);
 	}
-	
+
 	gtk_file_chooser_set_filter(GTK_FILE_CHOOSER(gtk_open_win), filter);
 	gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(gtk_open_win), folder);
-	
+
 	gtk_widget_show(gtk_open_win);
 }
 
@@ -160,10 +174,10 @@ void save_button_clicked(GtkWidget * widget, void ** filter)
 	selected_file = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(gtk_save_win));
 	if(selected_file){
 		//What should we do next...
-		if((point)*filter==(point)map_filter){
+		if((uintptr_t)*filter==(uintptr_t)map_filter){
 			strcpy(map_file_name, selected_file);
 			save_map_file_continued();
-		} else if((point)*filter==(point)part_filter){
+		} else if((uintptr_t)*filter==(uintptr_t)part_filter){
 			strcpy(particle_file_name, selected_file);
 			save_particle_def_file_continued();
 		}
@@ -175,31 +189,45 @@ void save_button_clicked(GtkWidget * widget, void ** filter)
 	gtk_widget_hide(gtk_save_win);
 }
 
+static void save_check_escape(GtkWidget *widget, GdkEventKey *event, gpointer data)
+{
+	if (gtk_save_win && event->keyval == GDK_KEY_Escape)
+		gtk_widget_hide(gtk_save_win);
+}
+
+static void save_kill_window(GtkWidget *widget, GdkEvent *event, gpointer data)
+{
+	if (gtk_save_win)
+		gtk_widget_hide(gtk_save_win);
+}
+
 void show_save_window(char * name, char * folder, char * select, GtkFileFilter * filter)
 {
 	static void * cur_filter;
-	
+
 	cur_filter=filter;
-	
+
 	if(!gtk_save_win) {
 		GList *buttons;
 		GtkWidget *cancel, *ok_button;
-		
+
 		gtk_save_win=gtk_file_chooser_dialog_new(name, NULL, GTK_FILE_CHOOSER_ACTION_SAVE,
 			GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL, //Cancel button
 			GTK_STOCK_SAVE, GTK_RESPONSE_ACCEPT,//Open button
 			NULL);
-		
+
 		buttons=((GtkHButtonBox*)(((GtkDialog*)gtk_save_win)->action_area))->button_box.box.children;
 		cancel=((GtkBoxChild*)buttons->data)->widget;
 		ok_button=((GtkBoxChild*)buttons->next->data)->widget;
 
 		g_signal_connect ((gpointer) cancel, "clicked", G_CALLBACK (hide_open_win), gtk_save_win);
 		g_signal_connect ((gpointer) ok_button, "clicked", G_CALLBACK (save_button_clicked), &cur_filter);
+		g_signal_connect(gtk_save_win, "key_press_event", G_CALLBACK(save_check_escape), NULL);
+		g_signal_connect(gtk_save_win, "delete_event", G_CALLBACK(save_kill_window), NULL);
 	} else {
 		gtk_window_set_title(GTK_WINDOW(gtk_save_win), name);
 	}
-	
+
 	gtk_file_chooser_set_filter(GTK_FILE_CHOOSER(gtk_save_win), filter);
 	gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(gtk_save_win), folder);
 	if(select[0])gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(gtk_save_win), select);
@@ -216,13 +244,13 @@ void show_eye_candy_window()
 		GtkWidget* label;
 		gtk_effect_win=gtk_dialog_new_with_buttons("Select eye candy effect",
 		                NULL,
-		                GTK_DIALOG_DESTROY_WITH_PARENT, 
+		                GTK_DIALOG_DESTROY_WITH_PARENT,
 				GTK_STOCK_OK, //Cancel button
 				GTK_RESPONSE_ACCEPT,//Open button
 				NULL);
 
 		g_signal_connect_swapped (gtk_effect_win,
-				"response", 
+				"response",
 				G_CALLBACK (confirm_eye_candy_effect),
 				gtk_effect_win);
 
@@ -245,7 +273,7 @@ void show_eye_candy_window()
 		gtk_combo_box_append_text(GTK_COMBO_BOX(gtk_effect_list), "Portal");
 		gtk_combo_box_append_text(GTK_COMBO_BOX(gtk_effect_list), "Candle");
 		g_signal_connect_swapped (gtk_effect_list,
-				"changed", 
+				"changed",
 				G_CALLBACK (change_eye_candy_effect),
 				gtk_effect_list);
 		gtk_widget_show(gtk_effect_list);
@@ -259,7 +287,7 @@ void show_eye_candy_window()
 
 		gtk_effect_hue = gtk_hscale_new(GTK_ADJUSTMENT(gtk_effect_hue_obj = gtk_adjustment_new(0.0, 0.0, 1.01, 0.01, 0.01, 0.01)));
 		g_signal_connect_swapped (gtk_effect_hue,
-				"value_changed", 
+				"value_changed",
 				G_CALLBACK (change_eye_candy_effect),
 				gtk_effect_list);
 		gtk_scale_set_digits(GTK_SCALE(gtk_effect_hue), 2);
@@ -274,10 +302,10 @@ void show_eye_candy_window()
 		gtk_box_pack_start(GTK_BOX(gtk_effect_hue_box), gtk_effect_hue, TRUE, TRUE, 0);
 		gtk_widget_hide(gtk_effect_hue_box);
 		gtk_box_pack_start(GTK_BOX(GTK_DIALOG(gtk_effect_win)->vbox), gtk_effect_hue_box, TRUE, TRUE, 0);
-		
+
 		gtk_effect_saturation = gtk_hscale_new(GTK_ADJUSTMENT(gtk_effect_saturation_obj = gtk_adjustment_new(1.0, 0.0, 16.01, 0.01, 0.01, 0.01)));
 		g_signal_connect_swapped (gtk_effect_saturation,
-				"value_changed", 
+				"value_changed",
 				G_CALLBACK (change_eye_candy_effect),
 				gtk_effect_list);
 		gtk_scale_set_digits(GTK_SCALE(gtk_effect_saturation), 2);
@@ -292,10 +320,10 @@ void show_eye_candy_window()
 		gtk_box_pack_start(GTK_BOX(gtk_effect_saturation_box), gtk_effect_saturation, TRUE, TRUE, 0);
 		gtk_widget_hide(gtk_effect_saturation_box);
 		gtk_box_pack_start(GTK_BOX(GTK_DIALOG(gtk_effect_win)->vbox), gtk_effect_saturation_box, TRUE, TRUE, 0);
-		
+
 		gtk_effect_scale = gtk_hscale_new(GTK_ADJUSTMENT(gtk_effect_scale_obj = gtk_adjustment_new(1.0, 0.01, 20.01, 0.02, 1.0, 0.01)));
 		g_signal_connect_swapped (gtk_effect_scale,
-				"value_changed", 
+				"value_changed",
 				G_CALLBACK (change_eye_candy_effect),
 				gtk_effect_list);
 		gtk_scale_set_digits(GTK_SCALE(gtk_effect_scale), 1);
@@ -310,10 +338,10 @@ void show_eye_candy_window()
 		gtk_box_pack_start(GTK_BOX(gtk_effect_scale_box), gtk_effect_scale, TRUE, TRUE, 0);
 		gtk_widget_hide(gtk_effect_scale_box);
 		gtk_box_pack_start(GTK_BOX(GTK_DIALOG(gtk_effect_win)->vbox), gtk_effect_scale_box, TRUE, TRUE, 0);
-		
+
 		gtk_effect_density = gtk_hscale_new(GTK_ADJUSTMENT(gtk_effect_density_obj = gtk_adjustment_new(1.0, 0.01, 20.01, 0.02, 1.0, 0.01)));
 		g_signal_connect_swapped (gtk_effect_density,
-				"value_changed", 
+				"value_changed",
 				G_CALLBACK (change_eye_candy_effect),
 				gtk_effect_list);
 		gtk_scale_set_digits(GTK_SCALE(gtk_effect_density), 1);
@@ -328,10 +356,10 @@ void show_eye_candy_window()
 		gtk_box_pack_start(GTK_BOX(gtk_effect_density_box), gtk_effect_density, TRUE, TRUE, 0);
 		gtk_widget_hide(gtk_effect_density_box);
 		gtk_box_pack_start(GTK_BOX(GTK_DIALOG(gtk_effect_win)->vbox), gtk_effect_density_box, TRUE, TRUE, 0);
-		
+
 		gtk_effect_base_height = gtk_entry_new_with_max_length(30);
 		g_signal_connect_swapped (gtk_effect_base_height,
-				"changed", 
+				"changed",
 				G_CALLBACK (change_eye_candy_effect),
 				gtk_effect_list);
 		gtk_entry_set_text(GTK_ENTRY(gtk_effect_base_height), "0.0");
@@ -349,7 +377,7 @@ void show_eye_candy_window()
 	} else {
 		gtk_window_set_title(GTK_WINDOW(gtk_effect_win), "Select eye candy effect");
 	}
-	
+
 	gtk_widget_show(gtk_effect_win);
 	eye_candy_initialized = 1;
 #endif	//EYE_CANDY

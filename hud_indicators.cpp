@@ -32,6 +32,7 @@
 #include "text.h"
 #include "translate.h"
 
+using namespace eternal_lands;
 
 namespace Indicators
 {
@@ -40,12 +41,19 @@ namespace Indicators
 	class Vars
 	{
 		public:
-			static const float zoom(void) { return scale; }
-			static const int space(void) { return (int)(0.5 + scale * 5); }
-			static const int border(void) { return (int)(0.5 + scale * 2); }
-			static const float font_x(void) { return DEFAULT_FONT_X_LEN; }
-			static const float font_y(void) { return DEFAULT_FONT_Y_LEN; }
-			static const int y_len(void) { return static_cast<int>(border() + zoom() * font_y() + 0.5); }
+			static float zoom(void) { return scale; }
+			static int space(void) { return (int)(0.5 + scale * 5); }
+			static int border(void) { return (int)(0.5 + scale * 2); }
+			static float font_x(void)
+			{
+				return FontManager::get_instance()
+					.max_width_spacing(FontManager::Category::UI_FONT);
+			}
+			static float font_y(void)
+			{
+				return FontManager::get_instance().line_height(FontManager::Category::UI_FONT);
+			}
+			static int y_len(void) { return static_cast<int>(border() + zoom() * font_y() + 0.5); }
 			static void set_scale(float new_scale) { scale = new_scale; }
 		private:
 			static float scale;
@@ -59,10 +67,10 @@ namespace Indicators
 	class Basic_Indicator
 	{
 		public:
-			Basic_Indicator(const char *the_strings, int (*ctrl)(void), int no);
+			Basic_Indicator(const char *the_strings, int (*ctrl)(void), int (*unavailable)(void), int no);
 			virtual void do_draw(int x_pos);
 			virtual void do_action(void) const { do_alert1_sound(); }
-			virtual void get_tooltip(std::string & tooltip) const { tooltip = ((cntr_func && cntr_func()) ?on_tooltip : off_tooltip); }
+			virtual void get_tooltip(std::string & tooltip) const;
 			virtual const std::string & get_context_menu_str(void) const { return context_menu_str; }
 			virtual int *get_active_var(void) { return &is_active; }
 			virtual void set_active(bool new_active) { is_active = (new_active) ?1 :0; }
@@ -73,7 +81,9 @@ namespace Indicators
 		protected:
 			std::string on_tooltip;
 			std::string off_tooltip;
+			std::string unavailable_tooltip;
 			int (*cntr_func)(void);
+			int (*unavailable_func)(void);
 		private:
 			std::string indicator_text;
 			std::string context_menu_str;
@@ -88,8 +98,8 @@ namespace Indicators
 	class Parse_Action_Indicator: public Basic_Indicator
 	{
 		public:
-			Parse_Action_Indicator(const char *the_strings, int (*ctrl)(void), int no, const char *the_action)
-				: Basic_Indicator(the_strings, ctrl, no), action(the_action) {}
+			Parse_Action_Indicator(const char *the_strings, int (*ctrl)(void), int (*unavailable)(void), int no, const char *the_action)
+				: Basic_Indicator(the_strings, ctrl, unavailable, no), action(the_action) {}
 			virtual void do_action(void) const;
 			virtual ~Parse_Action_Indicator(void) { }
 		private:
@@ -103,8 +113,8 @@ namespace Indicators
 	class Value_Indicator : public Basic_Indicator
 	{
 		public:
-			Value_Indicator(const char *the_strings, int (*ctrl)(void), int no, void (*action)(void))
-				: Basic_Indicator(the_strings, ctrl, no), action_function(action) {}
+			Value_Indicator(const char *the_strings, int (*ctrl)(void), int (*unavailable)(void), int no, void (*action)(void))
+				: Basic_Indicator(the_strings, ctrl, unavailable, no), action_function(action) {}
 			virtual void do_action(void) const;
 			virtual void get_tooltip(std::string & tooltip) const;
 			virtual ~Value_Indicator(void) { }
@@ -135,6 +145,7 @@ namespace Indicators
 			void set_settings(unsigned int opts, unsigned int pos) { option_settings = opts; position_settings = pos; have_settings = true;}
 			void get_settings(unsigned int *opts, unsigned int *pos);
 			void ui_scale_handler(window_info *win) { x_len = 0; y_len = 0; Vars::set_scale(win->current_scale); }
+			int get_default_width(void);
 		private:
 			void set_win_flag(Uint32 flag, int state);
 			void set_background(bool on) { background_on = on; set_win_flag(ELW_USE_BACKGROUND, background_on); }
@@ -161,8 +172,8 @@ namespace Indicators
 
 	//	Construct the indicator deriving the strings from the "||" separated string passed.
 	//
-	Basic_Indicator::Basic_Indicator(const char *the_strings, int (*ctrl)(void), int no)
-		: on_tooltip("Unset"), off_tooltip("Unset"), cntr_func(ctrl),
+	Basic_Indicator::Basic_Indicator(const char *the_strings, int (*ctrl)(void), int (*unavailable)(void), int no)
+		: on_tooltip("Unset"), off_tooltip("Unset"), unavailable_tooltip("Unset"), cntr_func(ctrl), unavailable_func(unavailable),
 			indicator_text("*"), is_active(1), mouse_over(false)
 	{
 		if (the_strings)
@@ -181,12 +192,14 @@ namespace Indicators
 			}
 			if ((len = line_text.size()-from_index) > 0)
 				fields.push_back(line_text.substr(from_index, len));
-			if (fields.size() == 4)
+			if (fields.size() >= 4)
 			{
 				indicator_text = fields[0];
 				on_tooltip = fields[1];
 				off_tooltip = fields[2];
 				context_menu_str = fields[3];
+				if (fields.size() == 5)
+					unavailable_tooltip = fields[4];
 			}
 		}
 	}
@@ -198,6 +211,8 @@ namespace Indicators
 	{
 		if (mouse_over)
 			glColor3f(1.0f,1.0f,1.0f);
+		else if (unavailable_func && unavailable_func())
+			glColor3f(0.20f,0.15f,0.10f);
 		else if (cntr_func && cntr_func())
 			glColor3f(0.99f,0.87f,0.65f);
 		else
@@ -206,6 +221,13 @@ namespace Indicators
 		mouse_over = false;
 	}
 
+	void Basic_Indicator::get_tooltip(std::string & tooltip) const
+	{
+		if (unavailable_func && unavailable_func())
+			tooltip = unavailable_tooltip;
+		else
+			tooltip = ((cntr_func && cntr_func()) ?on_tooltip : off_tooltip);
+	}
 
 	//	If an action string is defined, execute using the standard command line parser.
 	//
@@ -242,6 +264,11 @@ namespace Indicators
 	//
 	void Value_Indicator::get_tooltip(std::string & tooltip) const
 	{
+		if (unavailable_func && unavailable_func())
+		{
+			tooltip = unavailable_tooltip;
+			return;
+		}
 		std::ostringstream ss("");
 		int value = (cntr_func) ?cntr_func() :0;
 		if (value > 0)
@@ -273,12 +300,13 @@ namespace Indicators
 
 		if (indicators.empty())
 		{
-			indicators.reserve(5);
-			indicators.push_back(new Parse_Action_Indicator(day_indicator_str, today_is_special_day, indicators.size(), "#day"));
-			indicators.push_back(new Basic_Indicator(harvest_indicator_str, now_harvesting, indicators.size()));
-			indicators.push_back(new Basic_Indicator(poison_indicator_str, we_are_poisoned, indicators.size()));
-			indicators.push_back(new Value_Indicator(messages_indicator_str, get_seen_pm_count, indicators.size(), clear_seen_pm_count));
-			indicators.push_back(new Parse_Action_Indicator(ranginglock_indicator_str, ranging_lock_is_on, indicators.size(), "#keypress #K_RANGINGLOCK"));
+			indicators.reserve(6);
+			indicators.push_back(new Parse_Action_Indicator(day_indicator_str, today_is_special_day, 0, indicators.size(), "#day"));
+			indicators.push_back(new Basic_Indicator(harvest_indicator_str, now_harvesting, 0, indicators.size()));
+			indicators.push_back(new Basic_Indicator(poison_indicator_str, we_are_poisoned, 0, indicators.size()));
+			indicators.push_back(new Value_Indicator(messages_indicator_str, get_seen_pm_count, 0, indicators.size(), clear_seen_pm_count));
+			indicators.push_back(new Parse_Action_Indicator(ranginglock_indicator_str, ranging_lock_is_on, 0, indicators.size(), "#keypress #K_RANGINGLOCK"));
+			indicators.push_back(new Parse_Action_Indicator(glowperk_indicator_str, glow_perk_is_active, glow_perk_is_unavailable, indicators.size(), "#glow"));
 		}
 
 		x_len = static_cast<int>(Vars::font_x() * indicators.size() * Vars::zoom() +
@@ -461,9 +489,12 @@ namespace Indicators
 		std::vector<Basic_Indicator *>::iterator i = get_over(mx);
 		if (win && (i < indicators.end()))
 		{
+			eternal_lands::FontManager &fmgr = eternal_lands::FontManager::get_instance();
 			std::string tooltip("");
 			(*i)->get_tooltip(tooltip);
-			int x_offset = -static_cast<int>(Vars::border() + win->small_font_len_x * (1 + tooltip.size()) + 0.5);
+			int width = fmgr.line_width(win->font_category, (const unsigned char*)tooltip.c_str(),
+				tooltip.length(), win->current_scale_small);
+			int x_offset = -(Vars::border() + width);
 			if ((win->cur_x + x_offset) < 0)
 				x_offset = win->len_x;
 			show_help(tooltip.c_str(), x_offset, Vars::border(), win->current_scale);
@@ -549,6 +580,16 @@ namespace Indicators
 	}
 
 
+	//	Get the width of the indicators window if enabled and in the default location, otherwise 0.
+	//
+	int Indicators_Container::get_default_width(void)
+	{
+		if (!get_show_window(indicators_win) || !default_location || indicators_win < 0)
+			return 0;
+		return windows_list.window[indicators_win].len_x;
+	}
+
+
 	//	Get the x,y location, nice and snug against the bottom and right border
 	//
 	std::pair<int,int> Indicators_Container::get_default_location(void)
@@ -569,20 +610,25 @@ namespace Indicators
 		unsigned int x = 0;
 		unsigned int y = 0;
 
+		if (indicators_win < 0)
+		{
+			*opts = option_settings;
+			*pos = position_settings;
+			return;
+		}
+
 		std::vector<Basic_Indicator *>::iterator i;
 		for (i=indicators.begin(); i<indicators.end(); ++i, shift++)
 			flags |= (((*i)->not_active()) ?1 :0) << shift;
 
-		if (!default_location && (indicators_win >= 0))
-		{
+		if (!default_location)
 			flags |= 1 << 24;
-			x = static_cast<unsigned int>(windows_list.window[indicators_win].cur_x);
-			y = static_cast<unsigned int>(windows_list.window[indicators_win].cur_y);
-		}
 		flags |= background_on << 25;
 		flags |= border_on << 26;
-
 		*opts = flags;
+
+		x = static_cast<unsigned int>(windows_list.window[indicators_win].cur_x);
+		y = static_cast<unsigned int>(windows_list.window[indicators_win].cur_y);
 		*pos = x | (y<<16);
 	}
 
@@ -596,9 +642,10 @@ extern "C"
 	int show_hud_indicators = 1;
 	void init_hud_indicators(void) { if (show_hud_indicators) Indicators::container.init(); }
 	void destroy_hud_indicators(void) { Indicators::container.destroy(); }
-	void show_hud_indicators_window(void) { Indicators::container.show(); }
+	void show_hud_indicators_window(void) { if (show_hud_indicators) Indicators::container.show(); }
 	void hide_hud_indicators_window(void) { Indicators::container.hide(); }
 	void toggle_hud_indicators_window(int *show) { *show = !*show; Indicators::container.toggle(*show); }
 	void set_settings_hud_indicators(unsigned int opts, unsigned int pos) { return Indicators::container.set_settings(opts, pos); }
 	void get_settings_hud_indicators(unsigned int *opts, unsigned int *pos) { Indicators::container.get_settings(opts, pos); }
+	int get_hud_indicators_default_width(void) { if (show_hud_indicators) return Indicators::container.get_default_width(); else return 0; }
 }

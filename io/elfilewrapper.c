@@ -8,6 +8,7 @@
 #include "../errors.h"
 #include "../asc.h"
 #include "../init.h"
+#include "../misc.h"
 #include "../threads.h"
 #include "../hash.h"
 #include "../xz/7zCrc.h"
@@ -1021,6 +1022,19 @@ int el_custom_file_exists(const char* file_name)
 	ENTER_DEBUG_MARK("file exists");
 
 	result = file_exists_path(file_name, get_path_config_base());
+
+	LEAVE_DEBUG_MARK("file exists");
+
+	return result;
+}
+
+int el_file_exists_config(const char* file_name)
+{
+	int result;
+
+	ENTER_DEBUG_MARK("file exists");
+
+	result = file_exists_path(file_name, get_path_config());
 
 	LEAVE_DEBUG_MARK("file exists");
 

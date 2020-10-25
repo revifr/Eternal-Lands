@@ -372,7 +372,7 @@ int	create_window(const char *name, int pos_id, Uint32 pos_loc, int pos_x, int p
 			windows_list.window[win_id].displayed= (property_flags&ELW_SHOW)?1:0;
 			//windows_list.window[win_id].collapsed= 0;
 			windows_list.window[win_id].dragged= 0;
-			strncpy(windows_list.window[win_id].window_name, name, 32);
+			strncpy(windows_list.window[win_id].window_name, name, sizeof(windows_list.window[win_id].window_name)-1);
 
 			windows_list.window[win_id].back_color[0]= 0.0f;
 			windows_list.window[win_id].back_color[1]= 0.0f;
@@ -458,7 +458,7 @@ int	draw_window_title(window_info *win)
 	if((win->flags&ELW_TITLE_BAR) == ELW_TITLE_NONE)	return 0;
 
 	glColor3f(1.0f,1.0f,1.0f);
-	//ok, now draw that shit...
+	//ok, now draw it ...
 
 	bind_texture(icons_text);
 	glEnable(GL_ALPHA_TEST);

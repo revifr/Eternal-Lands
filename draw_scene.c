@@ -6,10 +6,13 @@
 #include "cal.h"
 #include "console.h"
 #include "cursors.h"
+#include "elconfig.h"
+#if !defined(MAP_EDITOR)
 #include "elwindows.h"
+#endif
+#include "events.h"
 #include "gamewin.h"
 #include "gl_init.h"
-#include "global.h"
 #include "hud.h"
 #include "hud_timer.h"
 #include "interface.h"
@@ -39,7 +42,6 @@ float ry=0;
 float rz=45;
 float terrain_scale=2.0f;
 float zoom_level=3.0f;
-float name_zoom=1.0f;
 #define MAX(a,b) ( ((a)>(b)) ? (a):(b))
 //First Person Camera mode state
 int first_person = 0;
@@ -127,18 +129,18 @@ void draw_scene()
 	}
 
 	glLoadIdentity ();	// Reset The Matrix
-	
+
 	Enter2DMode ();
 	display_windows (1);
 
 	// Have to draw the dragged item *after* all windows
-	
+
 	glColor3f(1.0f,1.0f,1.0f);
 	if (item_dragged != -1)
 		drag_item (item_dragged, 0, 0);
 	else if (use_item != -1 && current_cursor == CURSOR_USE_WITEM)
-		drag_item (use_item, 0, 1);
-	else if (storage_item_dragged != -1) 
+		drag_item (use_item, 0, ((cursor_scale_factor > 1) ?0: 1));
+	else if (storage_item_dragged != -1)
 		drag_item (storage_item_dragged, 1, 0);
 	draw_special_cursors();
 
@@ -149,8 +151,8 @@ void draw_scene()
 		if (current_cursor != elwin_mouse) change_cursor(elwin_mouse);
 		elwin_mouse = -1;
 	}
-	
-	SDL_GL_SwapBuffers();
+
+	SDL_GL_SwapWindow(el_gl_window);
 	CHECK_GL_ERRORS();
 
 	/* stuff to do not every frame, twice a second is fine */
@@ -177,6 +179,12 @@ void draw_scene()
 			check_then_do_buff_duration_request();
 			/* check if we are doing a server connection test */
 			check_if_testing_server_connection();
+			/* check if used item counter confirmation has expired */
+			used_item_counter_timer();
+			/* make sure minimised or restored window is noticed */
+			check_minimised_or_restore_window();
+			/* check if we need to action a scale change for the config window */
+			check_for_config_window_scale();
 			/* until next time */
 			last_half_second_timer = current_time;
 		}
@@ -215,7 +223,7 @@ void move_camera ()
         // the camera position corresponds to the head position
 		z = get_tile_height(me->x_tile_pos, me->y_tile_pos);
 		// z += (head_pos[2]+0.1)*get_actor_scale(me);
-		
+
 		//attachment_props *att_props = get_attachment_props_if_held(me);
 		//z += (me->sitting ? 0.7 : 1.5) * get_actor_scale(me);
 		if (me->attached_actor>=0) z+=me->z_pos + me->attachment_shift[Z]+2.0*get_actor_scale(me);
@@ -245,7 +253,7 @@ void move_camera ()
 		camera_y_speed=(y+camera_y)/follow_speed;
 		camera_y_duration=follow_speed;
 		camera_z_speed=(z+camera_z)/follow_speed;
-		camera_z_duration=follow_speed;		
+		camera_z_duration=follow_speed;
 	}
 
 
@@ -283,7 +291,7 @@ void clamp_camera(void)
 				rx = -min_tilt_angle;
 				camera_tilt_duration=0;
 				camera_tilt_speed = 0.0;
-			}			
+			}
 	} else {
 		if(rx < -60){
 			rx = -60;
@@ -335,9 +343,9 @@ void update_camera()
 	old_rx=rx;
 	old_rz=rz;
 	new_zoom_level=old_zoom_level=zoom_level;
-	
+
 	//printf("kludge: %f, hold: %f, rx: %f, rz %f, zoom: %f\n",camera_kludge, hold_camera,rx,rz,zoom_level);
-	
+
 	if (fol_cam && !fol_cam_behind)
 		rz = hold_camera;
 	if (me)
@@ -513,7 +521,7 @@ void update_camera()
 		old_camera_z= camera_z;
 	}
 
-	
+
 	hold_camera = rz;
 	if (fol_cam) {
 		static int fol_cam_stop = 0;
@@ -578,9 +586,11 @@ void update_camera()
 	last_update = cur_time;
 }
 
+#if !defined(MAP_EDITOR)
 int update_have_display(window_info * win)
 {
 	// if the calling window is shown, we have a display, else check all 3d windows
 	have_display = (win->displayed || get_show_window(game_root_win) || get_show_window(newchar_root_win));
 	return 0;
 }
+#endif

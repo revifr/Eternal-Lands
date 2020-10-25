@@ -12,10 +12,9 @@
 #include "console.h"
 #include "dialogues.h"
 #include "draw_scene.h"
+#include "elconfig.h"
 #include "errors.h"
 #include "filter.h"
-#include "global.h"
-#include "init.h"
 #include "missiles.h"
 #include "sound.h"
 #include "textures.h"
@@ -59,7 +58,7 @@ void build_glow_color_table()
 }
 
 //return the ID (number in the actors_list[]) of the new allocated actor
-int add_enhanced_actor(enhanced_actor *this_actor, float x_pos, float y_pos,
+static int add_enhanced_actor(enhanced_actor *this_actor, float x_pos, float y_pos,
 	float z_pos, float z_rot, float scale, int actor_id, const char* name)
 {
 	int texture_id;
@@ -199,7 +198,7 @@ Uint32 delay_texture_item_change(actor* a, const int which_part, const int which
 			a->delayed_item_changes[a->delayed_item_changes_count] = which_id;
 			a->delayed_item_type_changes[a->delayed_item_changes_count] = which_part;
 			a->delayed_item_changes_count++;
-	
+
 			return 1;
 		}
 	}
@@ -327,7 +326,7 @@ void actor_wear_item(int actor_id,Uint8 which_part, Uint8 which_id)
 	int j;
 #endif
 
-	
+
 	for(i=0;i<max_actors;i++)
 		{
 			if(actors_list[i])
@@ -715,7 +714,7 @@ void add_enhanced_actor_from_server (const char *in_data, int len)
 		if(frame>=frame_poses_start&&frame<=frame_poses_end) {
 			//we have a pose, get it! (frame is the emote_id)
 			hash_entry *he;
-			he=hash_get(emotes,(void*)(NULL+frame));
+			he=hash_get(emotes,(void*)(uintptr_t)frame);
 			if(!he) LOG_ERROR("unknown pose %d", frame);
 			else pose = he->item;
 			break;
@@ -1215,14 +1214,17 @@ void add_enhanced_actor_from_server (const char *in_data, int len)
         reset_camera_at_next_update = 1;
     }
 	update_actor_buffs(actor_id, buffs);
+
+	check_if_new_actor_last_summoned(actors_list[i]);
+
 	UNLOCK_ACTORS_LISTS();  //unlock it
 #ifdef EXTRA_DEBUG
 	ERR();
 #endif
 }
 
-actor * add_actor_interface(float x, float y, float z_rot, float scale, int actor_type, short skin, short hair, short eyes,
-				short shirt, short pants, short boots, short head)
+actor * add_actor_interface(float x, float y, float z_rot, float scale, int actor_type, const char *playername,
+		short skin, short hair, short eyes, short shirt, short pants, short boots, short head)
 {
 	enhanced_actor * this_actor=calloc(1,sizeof(enhanced_actor));
 	actor * a;
@@ -1255,7 +1257,7 @@ actor * add_actor_interface(float x, float y, float z_rot, float scale, int acto
 	a->stop_animation=1;//helps when the actor is dead...
 	a->kind_of_actor=HUMAN;
 
-	safe_snprintf(a->actor_name, sizeof(a->actor_name), "Player");
+	safe_snprintf(a->actor_name, sizeof(a->actor_name), playername);
 
 	if (actors_defs[actor_type].coremodel!=NULL) {
 		a->calmodel=model_new(actors_defs[actor_type].coremodel);

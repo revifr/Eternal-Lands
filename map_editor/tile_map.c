@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include "tiles.h"
 #include "global.h"
+#include "../asc.h"
+
+image_t map_tiles[256];
 
 void destroy_map_tiles()
 {
@@ -150,7 +153,7 @@ void load_map_tiles()
 			{
 				//tile not loaded, so load it
 				if(!cur_tile && dungeon) cur_tile=231;
-				sprintf(str,"./3dobjects/tile%i.dds",cur_tile);
+				snprintf(str, sizeof(str), "./3dobjects/tile%i.dds",cur_tile);
 				tile_list[cur_tile] = load_texture_cached(str, tt_mesh);
 			}
 	}

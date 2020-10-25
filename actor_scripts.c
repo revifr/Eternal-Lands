@@ -9,11 +9,10 @@
 #include "counters.h"
 #include "cursors.h"
 #include "draw_scene.h"
+#include "elconfig.h"
 #include "errors.h"
 #include "gamewin.h"
-#include "global.h"
 #include "hud_statsbar_window.h"
-#include "init.h"
 #include "interface.h"
 #include "missiles.h"
 #include "new_actors.h"
@@ -23,6 +22,7 @@
 #include "pathfinder.h"
 #include "platform.h"
 #include "skeletons.h"
+#include "special_effects.h"
 #ifdef NEW_SOUND
 #include "sound.h"
 #endif // NEW_SOUND
@@ -687,10 +687,10 @@ struct cal_anim *get_pose(actor *a, int pose_id, int pose_type, int held) {
 	hash_entry *he,*eh;
 	emote_data *pose;
 
-	eh=hash_get(emotes,(NULL+pose_id));
+	eh=hash_get(emotes,(void *)(uintptr_t)pose_id);
 	pose = eh->item;
 
-	he=hash_get(actors_defs[a->actor_type].emote_frames, (NULL+pose->anims[pose_type][0][held]->ids[0]));
+	he=hash_get(actors_defs[a->actor_type].emote_frames, (void *)(uintptr_t)(pose->anims[pose_type][0][held]->ids[0]));
 	if (he) return (struct cal_anim*) he->item;
 	else return NULL;
 }
@@ -703,7 +703,7 @@ struct cal_anim *get_pose_frame(int actor_type, actor *a, int pose_type, int hel
 	//find the pose. Pose is the first anim of the first frame
 	if (a->poses[pose_type]) {
 		//printf("getting pose for %s\n",a->actor_name);
-		he=hash_get(actors_defs[actor_type].emote_frames, (NULL+a->poses[pose_type]->anims[a_type][0][held]->ids[0]));
+		he=hash_get(actors_defs[actor_type].emote_frames, (void *)(uintptr_t)(a->poses[pose_type]->anims[a_type][0][held]->ids[0]));
 		if (he) return (struct cal_anim*) he->item;
 	}
 	//no pose or no emote..set defaults
@@ -713,32 +713,42 @@ struct cal_anim *get_pose_frame(int actor_type, actor *a, int pose_type, int hel
 			case EMOTE_SITTING:
 				return &actors_defs[a->actor_type].cal_frames[cal_actor_idle_sit_frame];
 			case EMOTE_STANDING:
-			    if(held) {
-				attachment_props *att_props = get_attachment_props_if_held(a);
-				if (att_props)
-					return &att_props->cal_frames[cal_attached_idle_frame];
-			    } else
-	                	// 75% chance to do idle1
-	                    if (actors_defs[a->actor_type].cal_frames[cal_actor_idle2_frame].anim_index != -1 
-				&& RAND(0, 3) == 0){
-				return &actors_defs[a->actor_type].cal_frames[cal_actor_idle2_frame]; //idle2
-	                    } else {
-        	                return &actors_defs[a->actor_type].cal_frames[cal_actor_idle1_frame]; //idle1
-			    }
+				if(held)
+				{
+					attachment_props *att_props = get_attachment_props_if_held(a);
+					if (att_props)
+						return &att_props->cal_frames[cal_attached_idle_frame];
+				}
+				else
+				{
+					// 75% chance to do idle1
+					if (actors_defs[a->actor_type].cal_frames[cal_actor_idle2_frame].anim_index != -1
+						&& RAND(0, 3) == 0)
+					{
+						return &actors_defs[a->actor_type].cal_frames[cal_actor_idle2_frame]; //idle2
+					} else {
+						return &actors_defs[a->actor_type].cal_frames[cal_actor_idle1_frame]; //idle1
+					}
+				}
+				break;
 			case EMOTE_RUNNING:
-			    if(held) {
-				attachment_props *att_props = get_attachment_props_if_held(a);
-				if (att_props)
-					return &att_props->cal_frames[cal_attached_run_frame/*get_held_actor_motion_frame(a)*/];
-			    } else
-				return &actors_defs[actor_type].cal_frames[cal_actor_run_frame/*get_actor_motion_frame(a)*/];
+				if(held)
+				{
+					attachment_props *att_props = get_attachment_props_if_held(a);
+					if (att_props)
+						return &att_props->cal_frames[cal_attached_run_frame/*get_held_actor_motion_frame(a)*/];
+				} else
+					return &actors_defs[actor_type].cal_frames[cal_actor_run_frame/*get_actor_motion_frame(a)*/];
+				break;
 			case EMOTE_WALKING:
-			    if(held) {
-				attachment_props *att_props = get_attachment_props_if_held(a);
-				if (att_props)
-					return &att_props->cal_frames[cal_attached_walk_frame/*get_held_actor_motion_frame(a)*/];
-			    } else
-				return &actors_defs[actor_type].cal_frames[cal_actor_walk_frame/*get_actor_motion_frame(a)*/];
+				if(held)
+				{
+					attachment_props *att_props = get_attachment_props_if_held(a);
+					if (att_props)
+						return &att_props->cal_frames[cal_attached_walk_frame/*get_held_actor_motion_frame(a)*/];
+				} else
+					return &actors_defs[actor_type].cal_frames[cal_actor_walk_frame/*get_actor_motion_frame(a)*/];
+				break;
 			default:
 				return NULL;
 			break;
@@ -886,7 +896,7 @@ int handle_emote_command(int act_id, emote_command *command)
 		if(command->emote->pose<=EMOTE_STANDING) {
 			//we have a pose
 			hash_entry *he;
-			he=hash_get(actors_defs[actor_type].emote_frames, (NULL+command->emote->anims[act->actor_type][0][held]->ids[0]));
+			he=hash_get(actors_defs[actor_type].emote_frames, (void *)(uintptr_t)(command->emote->anims[act->actor_type][0][held]->ids[0]));
 			
 			start_transition(act,((struct cal_anim*) he->item)->anim_index,300);
 			act->poses[command->emote->pose]=command->emote;
@@ -1196,42 +1206,61 @@ void next_command()
 						{
 							case attack_down_10:
 								index++;
+							// fall-through - suppress the compile warning with this comment
 							case attack_down_9:
 								index++;
+							// fall-through
 							case attack_down_8:
 								index++;
+							// fall-through
 							case attack_down_7:
 								index++;
+							// fall-through
 							case attack_down_6:
 								index++;
+							// fall-through
 							case attack_down_5:
 								index++;
+							// fall-through
 							case attack_down_4:
 								index++;
+							// fall-through
 							case attack_down_3:
 								index++;
+							// fall-through
 							case attack_down_2:
 								index++;
+							// fall-through
 							case attack_down_1:
 								index++;
+							// fall-through
 							case attack_up_10:
 								index++;
+							// fall-through
 							case attack_up_9:
 								index++;
+							// fall-through
 							case attack_up_8:
 								index++;
+							// fall-through
 							case attack_up_7:
 								index++;
+							// fall-through
 							case attack_up_6:
 								index++;
+							// fall-through
 							case attack_up_5:
 								index++;
+							// fall-through
 							case attack_up_4:
 								index++;
+							// fall-through
 							case attack_up_3:
 								index++;
+							// fall-through
 							case attack_up_2:
 								index++;
+							// fall-through
 							case attack_up_1:
 								index++;
 								break;
@@ -1726,6 +1755,17 @@ void free_actor_data(int actor_index)
     ec_actor_delete(act);
 }
 
+//  Assumed LOCK_ACTORS_LISTS mutex already held
+static void destroy_actor_common(size_t actor_list_index)
+{
+	if ((actor_list_index >= max_actors) || (actors_list[actor_list_index] == NULL))
+		return; // return of not valid actor
+	free_actor_special_effect(actors_list[actor_list_index]->actor_id);
+	free_actor_data(actor_list_index);
+	free(actors_list[actor_list_index]);
+	actors_list[actor_list_index]=NULL;
+}
+
 void destroy_actor(int actor_id)
 {
 	int i;
@@ -1742,9 +1782,7 @@ void destroy_actor(int actor_id)
 
 				if (actor_id == yourself)
 					set_our_actor (NULL);
-                free_actor_data(i);
-				free(actors_list[i]);
-				actors_list[i]=NULL;
+				destroy_actor_common(i);
 				if(i==max_actors-1)max_actors--;
 				else {
 					//copy the last one down and fill in the hole
@@ -1758,9 +1796,7 @@ void destroy_actor(int actor_id)
 
                 if (attached_actor >= 0)
                 {
-                    free_actor_data(attached_actor);
-                    free(actors_list[attached_actor]);
-                    actors_list[attached_actor]=NULL;
+                    destroy_actor_common(attached_actor);
                     if(attached_actor==max_actors-1)max_actors--;
                     else {
                         //copy the last one down and fill in the hole
@@ -1786,9 +1822,7 @@ void destroy_all_actors()
 	set_our_actor (NULL);
 	for(i=0;i<max_actors;i++) {
 		if(actors_list[i]){
-            free_actor_data(i);
-			free(actors_list[i]);
-			actors_list[i]=NULL;
+			destroy_actor_common(i);
 		}
 	}
 	max_actors= 0;
@@ -1801,12 +1835,13 @@ void destroy_all_actors()
 
 
 
-void update_all_actors()
+void update_all_actors(int log_the_update)
 {
  	Uint8 str[40];
 
 	//we got a nasty error, log it
-	LOG_TO_CONSOLE(c_red2,resync_server);
+	if (log_the_update)
+		LOG_TO_CONSOLE(c_red2,resync_server);
 
 	destroy_all_actors();
 	str[0]=SEND_ME_MY_ACTORS;
@@ -2175,7 +2210,8 @@ void add_command_to_actor(int actor_id, unsigned char command)
 		if(k>MAX_CMD_QUEUE-2){
 			int i;
 			int k;
-			LOG_ERROR("Too much commands in the queue for actor %d (%s) => skip emotes!",
+			if (max_fps == limit_fps)
+				LOG_ERROR("Too much commands in the queue for actor %d (%s) => skip emotes!",
 					  act->actor_id, act->actor_name);
 			for(i=MAX_CMD_QUEUE-1;i>=0;i--) {
 				if(act->que[i]>=emote_cmd&&act->que[i]<wait_cmd) {
@@ -2193,14 +2229,17 @@ void add_command_to_actor(int actor_id, unsigned char command)
 				}
 			}
 			//if we are here no emotes have been skipped
-			LOG_ERROR("Too much commands in the queue for actor %d (%s) => resync!\n",
-					  act->actor_id, act->actor_name);
+			if (max_fps == limit_fps)
+			{
+				LOG_ERROR("Too much commands in the queue for actor %d (%s) => resync!\n",
+					act->actor_id, act->actor_name);
 #ifdef	ANIMATION_SCALING
-			LOG_ERROR("animation_scale: %f\n", act->animation_scale);
+				LOG_ERROR("animation_scale: %f\n", act->animation_scale);
 #endif	/* ANIMATION_SCALING */
-			for (i = 0; i < MAX_CMD_QUEUE; ++i)
-				LOG_ERROR("%dth command in the queue: %d\n", i, (int)act->que[i]);
-			update_all_actors();
+				for (i = 0; i < MAX_CMD_QUEUE; ++i)
+					LOG_ERROR("%dth command in the queue: %d\n", i, (int)act->que[i]);
+			}
+			update_all_actors(max_fps == limit_fps);
 		}
 	}
 	UNLOCK_ACTORS_LISTS();
@@ -2241,7 +2280,7 @@ void add_emote_to_actor(int actor_id, int emote_id){
 	//printf("SERVER MSG\nwe have actor %i %p\n",actor_id,act);
 	if(emote_id!=0) {
 		//dirty, but avoids warnings :P
-		he=hash_get(emotes,(void*)(NULL+emote_id));
+		he=hash_get(emotes, (void *)(uintptr_t)emote_id);
 		if(!he) {
 			LOG_ERROR("%s (Emote) %i- NULL emote passed", cant_add_command,emote_id);
 			UNLOCK_ACTORS_LISTS();
@@ -2320,7 +2359,7 @@ void get_actor_damage(int actor_id, int damage)
 				bone_y = bone_list[bone][1] + act->y_pos + 0.25;
 				bone_z = bone_list[bone][2] + ec_get_z(act);
 //				printf("ec_create_impact_blood((%f %f, %f), (%f, %f, %f), %d, %f);", bone_x, bone_y, bone_z, ((float)rand()) * blood_level / RAND_MAX / 13.0, ((float)rand()) * blood_level / RAND_MAX / 13.0, ((float)rand()) * blood_level / RAND_MAX / 13.0, (poor_man ? 6 : 10), blood_level);
-				ec_create_impact_blood(bone_x, bone_y, bone_z, ((float)rand()) * blood_level / RAND_MAX / 13.0, ((float)rand()) * blood_level / RAND_MAX / 13.0, ((float)rand()) * blood_level / RAND_MAX / 13.0, (poor_man ? 6 : 10), blood_level);
+				ec_create_impact_blood(bone_x, bone_y, bone_z, (float)rand() * blood_level / (RAND_MAX * 13.0), (float)rand() * blood_level / (RAND_MAX * 13.0), (float)rand() * blood_level / (RAND_MAX * 13.0), (poor_man ? 6 : 10), blood_level);
 			}
 		}
 	}
@@ -2588,7 +2627,7 @@ emote_data *new_emote(int id){
 	emote=(emote_data*)calloc(1,sizeof(emote_data));
 	init_emote(emote);
 	emote->id=id;
-	hash_add(emotes,(void*)(NULL+id),(void*)emote);
+	hash_add(emotes,(void *)(uintptr_t)id,(void*)emote);
 	return emote;
 }
 
@@ -3249,6 +3288,19 @@ int parse_actor_weapon_detail (actor_types *act, weapon_part *weapon, const xmlN
 						, get_int_property(item, "duration")
 						);
 				}
+#ifndef NEW_SOUND
+				else if (!strcmp(name, "snd_attack_up1") || !strcmp(name, "snd_attack_up2") ||
+					!strcmp(name, "snd_attack_up3") || !strcmp(name, "snd_attack_up4") ||
+					!strcmp(name, "snd_attack_up5") || !strcmp(name, "snd_attack_up6") ||
+					!strcmp(name, "snd_attack_up7") || !strcmp(name, "snd_attack_up8") ||
+					!strcmp(name, "snd_attack_up9") || !strcmp(name, "snd_attack_up10") ||
+					!strcmp(name, "snd_attack_down1") || !strcmp(name, "snd_attack_down2") ||
+					!strcmp(name, "snd_attack_down3") || !strcmp(name, "snd_attack_down4") ||
+					!strcmp(name, "snd_attack_down5") || !strcmp(name, "snd_attack_down6") ||
+					!strcmp(name, "snd_attack_down7") || !strcmp(name, "snd_attack_down8") ||
+					!strcmp(name, "snd_attack_down9") || !strcmp(name, "snd_attack_down10"))
+				{ /* ignore */ }
+#endif
 				else
 				{
 					LOG_ERROR("unknown weapon property \"%s\"", item->name);
@@ -3954,7 +4006,7 @@ int parse_actor_frames (actor_types *act, const xmlNode *cfg, const xmlNode *def
 #endif	//NEW_SOUND
 					, get_int_property(item, "duration")
 					);
-					hash_add(act->emote_frames, (void*)(NULL+j), (void*)anim);					
+					hash_add(act->emote_frames, (void *)(uintptr_t)j, (void*)anim);
 					continue;
 				}
 			}
@@ -4383,8 +4435,8 @@ int parse_actor_nodes(actor_types *act, const xmlNode *cfg, const xmlNode *defau
 				ok &= parse_actor_helmet(act, item, defaults);
 			} else if (!strcmp(name, "neck")) {
 				ok &= parse_actor_neck(act, item, defaults);
-#ifdef NEW_SOUND
 			} else if (!strcmp(name, "sounds")) {
+#ifdef NEW_SOUND
 				ok &= parse_actor_sounds(act, item->children);
 #endif	//NEW_SOUND
 			} else if (!strcmp(name, "actor_attachment")) {

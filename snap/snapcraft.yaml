@@ -1,0 +1,104 @@
+name: eternallands
+# Set to x.y.zpn / x.y.zpn-dev for stable / dev build
+version: '1.9.5p9-dev'
+summary: Eternal Lands is a free to play, graphical MMORPG
+description: |
+  Eternal Lands is a free to play, graphical MMORPG (massively-multi-player
+  online role-playing game).  Different from other role-playing games, there are
+  no fixed classes so you can improve any of the many skills.  There is a choice
+  of several character races but all are equal.
+  See http://www.eternal-lands.com/
+grade: stable
+base: core18
+confinement: strict
+type: app
+icon: pkgfiles/snap-package/eternallands.png
+
+parts:
+  desktop-glib-only:
+    source: https://github.com/ubuntu/snapcraft-desktop-helpers.git
+    source-subdir: glib-only
+    plugin: make
+    build-packages:
+      - libglib2.0-dev
+    stage-packages:
+      - libglib2.0-bin
+
+  client:
+    source: https://github.com/raduprv/Eternal-Lands
+    source-type: git
+    # Include for stable release, comment out for dev build, comment out for latest commit dev release
+    # source-tag: 1.9.5.8
+    build-packages: [build-essential, libcal3d12-dev, libsdl2-image-dev, libsdl2-net-dev, libsdl2-ttf-dev, libxml2-dev, libopenal-dev, libvorbis-dev, libpng-dev]
+    plugin: cmake
+    # Add -DVERSION_PREFIX=x.y.z for dev build, remove for release
+    configflags:  ["-DCMAKE_BUILD_TYPE=release", "-DEXEC=el.linux.bin", "-DVERSION_PREFIX=1.9.5", "-DLOCAL_NLOHMANN_JSON=On", "-DTTF=On" ]
+    stage-packages:
+      - libglib2.0-0
+      - libsdl2-net-2.0-0
+      - libxml2
+      - libogg0
+      - libvorbis0a
+      - libvorbisfile3
+      - libopenal1
+      - libcal3d12v5
+      - libsdl2-image-2.0-0
+      - libsdl2-ttf-2.0-0
+      - libxrandr2
+      - zlib1g
+      - libpng16-16
+      - libegl1-mesa
+      - libglu1-mesa
+      - libgl1-mesa-dri
+      - libgl1-mesa-glx
+      - libglapi-mesa
+      - libgles2-mesa
+      - libosmesa6
+      - mesa-va-drivers
+      - mesa-vdpau-drivers
+      - mesa-vulkan-drivers
+    after:
+      - desktop-glib-only
+
+  data:
+    source: https://twinmoons.org.uk/el/git/el_195_latest_data.zip
+    source-checksum: md5/8354f13b7d9109402cbfa29061b301c5
+    plugin: dump
+    organize:
+      el_data/ : data/
+    override-build: |
+      snapcraftctl build
+      sed -i 's|^#browser.*$|#browser = x-www-browser|g' $SNAPCRAFT_PART_INSTALL/el_data/el.ini
+      sed -i 's|^#use_new_selection.*$|#use_new_selection = 1|g' $SNAPCRAFT_PART_INSTALL/el_data/el.ini
+
+  sound:
+    source: https://github.com/raduprv/Eternal-Lands/releases/download/1.9.5.2/eternallands-sound_1.9.4.zip
+    source-checksum: md5/28678c3fce12780859ab29d673658681
+    plugin: dump
+    organize:
+      '*' : data/
+
+  music:
+    source: https://github.com/raduprv/Eternal-Lands/releases/download/1.9.5.2/music_full.zip
+    source-checksum: md5/95220e0df0be0eb4f2b9646cc5d6b7e5
+    plugin: dump
+    organize:
+      '*' : data/music/
+
+  launcher:
+    plugin: nil
+    override-build: |
+      mkdir -p $SNAPCRAFT_PART_INSTALL/bin/
+      cp -p ${SNAPCRAFT_PROJECT_DIR}/pkgfiles/snap-package/launcher.sh $SNAPCRAFT_PART_INSTALL/bin/
+      cp -p ${SNAPCRAFT_PROJECT_DIR}/pkgfiles/snap-package/eternallands.desktop $SNAPCRAFT_PART_INSTALL/bin/
+
+apps:
+  client:
+    plugs:
+      - x11
+      - opengl
+      - network
+      - audio-playback
+      - desktop
+    desktop: bin/eternallands.desktop
+    command: desktop-launch $SNAP/bin/launcher.sh $*

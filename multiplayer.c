@@ -15,14 +15,15 @@
 #include "consolewin.h"
 #include "dialogues.h"
 #include "draw_scene.h"
+#include "elc_private.h"
+#include "elconfig.h"
 #include "elwindows.h"
 #include "errors.h"
 #include "filter.h"
 #include "gamewin.h"
-#include "global.h"
+#include "gl_init.h"
 #include "hud.h"
 #include "hud_quickspells_window.h"
-#include "init.h"
 #include "interface.h"
 #include "knowledge.h"
 #include "lights.h"
@@ -31,6 +32,7 @@
 #include "map.h"
 #include "new_actors.h"
 #include "new_character.h"
+#include "password_manager.h"
 #include "particles.h"
 #include "pathfinder.h"
 #include "questlog.h"
@@ -62,6 +64,13 @@
  */
 SDL_mutex* tcp_out_data_mutex = 0;
 
+static int client_version_major=VER_MAJOR;
+static int client_version_minor=VER_MINOR;
+static int client_version_release=VER_RELEASE;
+static int client_version_patch=VER_BUILD;
+static int version_first_digit=10;	//protocol/game version sent to server
+static int version_second_digit=28;
+
 const char * web_update_address= "http://www.eternal-lands.com/index.php?content=update";
 int icon_in_spellbar= -1;
 int port= 2000;
@@ -74,6 +83,7 @@ Uint8 tcp_out_data[MAX_TCP_BUFFER];
 int in_data_used=0;
 int tcp_out_loc= 0;
 int previously_logged_in= 0;
+volatile int disconnected= 1;
 time_t last_heart_beat;
 time_t last_save_time;
 int always_pathfinding = 0;
@@ -81,8 +91,6 @@ int mixed_message_filter = 0;
 char inventory_item_string[300] = {0};
 size_t inventory_item_string_id = 0;
 
-char our_name[20];
-char our_password[20];
 int log_conn_data= 0;
 
 int this_version_is_invalid= 0;
@@ -101,8 +109,8 @@ static Uint32 testing_server_connection_time = 0;
 
 int yourself= -1;
 
-int last_sit= 0;
-int last_turn_around = 0;
+static int last_sit= 0;
+static int last_turn_around = 0;
 
 Uint32 next_second_time = 0;
 short real_game_minute = 0;
@@ -128,10 +136,29 @@ Uint32 diff_game_time_sec(Uint32 ref_time)
 	return curr_game_time - ref_time;
 }
 
+// NOTE: Len = length of the buffer, not the string (Verified)
+void get_version_string (char *buf, size_t len)
+{
+#ifdef GIT_VERSION
+	safe_snprintf (buf, len, "%s %s", game_version_prefix_str, GIT_VERSION);
+#else
+	char extra[100];
+
+	if (client_version_patch > 0)
+	{
+		safe_snprintf (extra, sizeof(extra), "p%d %s", client_version_patch, DEF_INFO);
+	}
+	else
+	{
+		safe_snprintf (extra, sizeof(extra), " %s", DEF_INFO);
+	}
+	safe_snprintf (buf, len, game_version_str, client_version_major, client_version_minor, client_version_release, extra);
+#endif
+}
 
 /*
  *	Date handling code:
- * 
+ *
  * 		Maintain a string with the current date.  This gets invalidated
  * 	at the turn of the day but not immediately refreshed.  Rather, the
  * 	refresh (asking the server) is done next time the get string is
@@ -299,7 +326,8 @@ static int my_locked_tcp_flush(TCPsocket my_socket)
 
 int my_tcp_send (TCPsocket my_socket, const Uint8 *str, int len)
 {
-	Uint8 new_str[1024];	//should be enough
+	Uint8 *new_str = NULL;
+	int ret_status = 0;
 
 	CHECK_AND_LOCK_MUTEX(tcp_out_data_mutex);
 
@@ -410,15 +438,19 @@ int my_tcp_send (TCPsocket my_socket, const Uint8 *str, int len)
 
 	CHECK_AND_UNLOCK_MUTEX(tcp_out_data_mutex);
 
+	if ((new_str = (Uint8 *)malloc(3 + len - 1)) == NULL)
+		return 0;
 	new_str[0] = str[0];	//copy the protocol byte
 	*((short *)(new_str+1)) = SDL_SwapLE16((Uint16)len);//the data length
 	// copy the rest of the data
 	memcpy(&new_str[3], &str[1], len-1);
 #ifdef	OLC
-	return olc_tcp_send(my_socket, new_str, len+2);
+	ret_status = olc_tcp_send(my_socket, new_str, len+2);
 #else	//OLC
-	return SDLNet_TCP_Send(my_socket, new_str, len+2);
+	ret_status = SDLNet_TCP_Send(my_socket, new_str, len+2);
 #endif	//OLC
+	free(new_str);
+	return ret_status;
 }
 
 int my_tcp_flush(TCPsocket my_socket)
@@ -555,7 +587,7 @@ void connect_to_server()
 	clear_now_harvesting();
 	last_heart_beat= time(NULL);
 	send_heart_beat();	// prime the hearbeat to prevent some stray issues when there is lots of lag
-	hide_window(trade_win);
+	hide_window_MW(MW_TRADE);
 	do_connect_sound();
 
 	my_tcp_flush(my_socket);    // make sure tcp output buffer is empty
@@ -563,31 +595,39 @@ void connect_to_server()
 
 void send_login_info()
 {
-	int i,j,len;
+	int i,j,username_len,password_len,joint_len;
 	unsigned char str[40];
+	const char * local_username_str;
+	const char * local_password_str;
 
-	len= strlen(username_str);
-	//check for the username length
-	if (len < 3)
-	{
-		set_login_error (error_username_length, strlen (error_username_length), 1);
+	if (!valid_username_pasword())
 		return;
-	}
+
+	local_username_str = get_username();
+	local_password_str = get_password();
+	username_len = strlen(local_username_str);
+	password_len = strlen(local_password_str);
+
+	if (disconnected)
+		connect_to_server();
 
 	//join the username and password, and send them to the server
 	str[0]= LOG_IN;
-
-	if(caps_filter && my_isupper(username_str, len)) my_tolower(username_str);
-	for(i=0; i<len; i++) str[i+1]= username_str[i];
+	if(caps_filter && my_isupper(local_username_str, username_len))
+	{
+		set_username(get_lowercase_username());
+		local_username_str = get_username();
+		username_len = strlen(local_username_str);
+	}
+	for(i=0; i<username_len; i++) str[i+1]= local_username_str[i];
 	str[i+1]= ' ';
 	i++;
-	len= strlen(password_str);
-	for(j=0; j<len; j++) str[i+j+1]= password_str[j];
+	for(j=0; j<password_len; j++) str[i+j+1]= local_password_str[j];
 	str[i+j+1]= 0;
 
-	len = strlen((char*)str);
-	len++;//send the last 0 too
-	if(my_tcp_send(my_socket, str, len)<len)
+	joint_len = strlen((char*)str);
+	joint_len++;//send the last 0 too
+	if(my_tcp_send(my_socket, str, joint_len)<joint_len)
 		{
 			//we got a nasty error, log it
 		}
@@ -648,7 +688,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 		case RAW_TEXT:
 			{
 				int len;
-				
+
 				if (data_length <= 4)
 				{
 				  LOG_WARNING("CAUTION: Possibly forged RAW_TEXT packet received.\n");
@@ -662,7 +702,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				if (in_data[3] == server_pop_chan)
 				{
 					if (use_server_pop_win)
-						display_server_popup_win((char*)text_buf);
+						display_server_popup_win(text_buf);
 					else
 						put_text_in_buffer (in_data[3], text_buf, len);
 					// if we're expecting a quest entry, this will be it
@@ -671,7 +711,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 						char cur_npc_name[sizeof(npc_name)];
 						safe_strncpy2(cur_npc_name, (char *)npc_name, sizeof(npc_name), sizeof(npc_name));
 						safe_strncpy((char *)npc_name, "<None>", sizeof(npc_name));
-						add_questlog((char*)text_buf, len);
+						add_questlog(text_buf, len);
 						safe_strncpy2((char *)npc_name, cur_npc_name, sizeof(npc_name), sizeof(npc_name));
 					}
 				}
@@ -801,11 +841,11 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 					destroy_new_character_interface();
 				}
 				newchar_root_win = -1;
-				if (!get_show_window(console_root_win))
+				if (!get_show_window_MW(MW_CONSOLE))
 					show_window (game_root_win);
 
-				safe_snprintf(str,sizeof(str),"(%s on %s) %s",username_str,get_server_name(),win_principal);
-				SDL_WM_SetCaption(str, "eternallands" );
+				safe_snprintf(str,sizeof(str),"(%s on %s) %s",get_username(),get_server_name(),win_principal);
+				SDL_SetWindowTitle(el_gl_window, str);
 
 #if defined NEW_SOUND
 				// Try to turn on the music as it isn't needed up until now
@@ -813,6 +853,11 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 					turn_music_on();
 #endif // NEW_SOUND
 
+				passmngr_save_login();
+#ifdef JSON_FILES
+				set_ready_for_user_files();
+				load_character_options();
+#endif
 				load_quickspells();
 				load_recipes();
 				load_server_markings();
@@ -820,6 +865,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				load_counters();
 				load_channel_colors();
 				send_video_info();
+				check_glow_perk();
 				previously_logged_in=1;
 				last_save_time= time(NULL);
 
@@ -835,13 +881,13 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 
 		case HERE_YOUR_STATS:
 			{
-				if (data_length <= 167)
+				if (data_length <= 112*sizeof(Sint16) + 3)
 				{
-				  LOG_WARNING("CAUTION: Possibly forged HERE_YOUR_STATS packet received.\n");
-				  break;
+					LOG_WARNING("CAUTION: Possibly forged HERE_YOUR_STATS packet received.\n");
+					break;
 				}
 				get_the_stats((Sint16 *)(in_data+3), data_length-3);
-				update_research_rate();
+				request_true_knowledge_info();
 			}
 			break;
 
@@ -891,7 +937,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 			{
 				int items;
 				int plen;
-		
+
 				if (data_length <= 3)
 				{
 				  LOG_WARNING("CAUTION: Possibly forged HERE_YOUR_INVENTORY packet received.\n");
@@ -933,7 +979,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 					plen=10;
 				else
 					plen=8;
-				
+
 				// allow for multiple packets in a row
 				while(data_length >= 3+plen){
 					get_new_inventory_item(in_data+3);
@@ -965,14 +1011,11 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				safe_strncpy2(inventory_item_string, (const char *)&in_data[3], sizeof(inventory_item_string)-1, data_length - 3);
 				inventory_item_string[sizeof(inventory_item_string)-1] = 0;
 				inventory_item_string_id++;
-				if(!(mixed_message_filter||get_show_window(items_win)||get_show_window(manufacture_win)||get_show_window(trade_win)))
-					{
-						put_text_in_buffer(CHAT_SERVER, &in_data[3], data_length-3);
-					}
 				// Start a new block, since C doesn't like variables declared in the middle of a block.
 				{
 					char *teststring = "You successfully created ";
 					int testlen = strlen(teststring);
+					int is_created_message = 0;
 					if ( (data_length > testlen+4) && (!strncmp((char*)in_data+4, teststring, testlen)) )
 					{
 						char *restofstring = malloc(data_length - 4 - testlen + 1);
@@ -990,10 +1033,16 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 							}
 						}
 						free(restofstring);
+						is_created_message = 1;
 					}
 					// if we don't get the product name, make sure we don't just count it as the last item.
 					else
 						counters_set_product_info("",0);
+					if(!((is_created_message && mixed_message_filter) ||
+							get_show_window_MW(MW_ITEMS) ||
+							get_show_window_MW(MW_MANU) ||
+							get_show_window_MW(MW_TRADE)))
+						put_text_in_buffer(CHAT_SERVER, &in_data[3], data_length-3);
 				}  // End successs counters block
 				/* You failed to create a[n] ..., and lost the ingredients */
 				if (my_strncompare(inventory_item_string+1, "You failed to create a[n] ", 26))
@@ -1048,7 +1097,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				if(in_data[3] == '.' && in_data[4] == '/')
 				{
 					safe_strncpy2(mapname, (char*)in_data + 3, sizeof(mapname), data_length - 3);
-				} else 
+				} else
 				{
 					safe_snprintf(mapname, sizeof(mapname), "./%s", (char*)in_data + 3);
 				}
@@ -1200,6 +1249,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 
 		case START_RAIN:
 			{
+				weather_type w_type;
 				float severity;
 #ifdef EXTRA_DEBUG
 	ERR();
@@ -1210,20 +1260,26 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 					break;
 				}
 
-				if (data_length > 4) {
+				if (data_length > 4)
 					severity= 0.1f + 0.9f * (in_data[4] / 255.0f);
-				} else {
+				else
 					severity= 1.0f;
-				}
+
+				if ((data_length > 5) && (in_data[5] < MAX_WEATHER_TYPES))
+					w_type = in_data[5];
+				else
+					w_type = get_weather_type_for_map();
+
+				//printf("START_RAIN from server using type=%d duration=%d severity=%.2f data_length=%d\n", w_type, in_data[3], severity, data_length);
+
 				if (show_weather)
-				{
-					weather_set_area(0, tile_map_size_x*1.5, tile_map_size_y*1.5, 100000.0, 1, severity, in_data[3]);
-				}
+					weather_set_area(0, tile_map_size_x*1.5, tile_map_size_y*1.5, 100000.0, w_type, severity, in_data[3]);
 			}
 			break;
 
 		case STOP_RAIN:
 			{
+				weather_type w_type;
 #ifdef EXTRA_DEBUG
 	ERR();
 #endif
@@ -1233,7 +1289,14 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 					break;
 				}
 
-				weather_set_area(0, tile_map_size_x*1.5, tile_map_size_y*1.5, 100000.0, 1, 0.0, in_data[3]);
+				if ((data_length > 4) && (in_data[4] < MAX_WEATHER_TYPES))
+					w_type = in_data[4];
+				else
+					w_type = get_weather_type_for_map();
+
+				//printf("STOP_RAIN from server using type=%d duration=%d data_length=%d\n", w_type, in_data[3], data_length);
+
+				weather_set_area(0, tile_map_size_x*1.5, tile_map_size_y*1.5, 100000.0, w_type, 0.0, in_data[3]);
 			}
 			break;
 
@@ -1368,7 +1431,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				  LOG_WARNING("CAUTION: Possibly forged FIRE_PARTICLES packet received.\n");
 				  break;
 				}
-				add_fire_at_tile (SDL_SwapLE16(*(Uint16 *)(in_data+7)), SDL_SwapLE16(*((Uint16 *)(in_data+3))), SDL_SwapLE16(*((Uint16 *)(in_data+5))));
+				add_fire_at_tile (SDL_SwapLE16(*(Uint16 *)(in_data+7)), SDL_SwapLE16(*((Uint16 *)(in_data+3))), SDL_SwapLE16(*((Uint16 *)(in_data+5))), 0);
 			}
 			break;
 
@@ -1426,7 +1489,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 #ifdef EXTRA_DEBUG
 	ERR();
 #endif
-				hide_window(ground_items_win);
+				server_close_bag();
 			}
 			break;
 
@@ -1466,13 +1529,13 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 					// double color code, this text
 					// should be added to the quest log
 					safe_strncpy2((char*)text_buf, (char*)&in_data[4], sizeof(text_buf), data_length - 4);
-					add_questlog ((char*)text_buf, strlen((char*)text_buf));
+					add_questlog(text_buf, strlen((char*)text_buf));
 				}
 				// if we're expecting a quest entry, this will be it
 				else if (waiting_for_questlog_entry())
 				{
 					safe_strncpy2((char*)text_buf, (char*)&in_data[3], sizeof(text_buf), data_length - 3);
-					add_questlog ((char*)text_buf, strlen((char*)text_buf));
+					add_questlog(text_buf, strlen((char*)text_buf));
 				}
 			}
 			break;
@@ -1528,7 +1591,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 
 		case GET_TRADE_EXIT:
 			{
-				hide_window(trade_win);
+				hide_window_MW(MW_TRADE);
 				trade_exit();
 			}
 			break;
@@ -1563,8 +1626,8 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				if (item_uid_enabled)
 					plen=10;
 				else
-					plen=8;		
-			
+					plen=8;
+
 				if (data_length <= 3+plen)
 				{
 				  LOG_WARNING("CAUTION: Possibly forged GET_TRADE_OBJECT packet received.\n");
@@ -1818,7 +1881,7 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				  LOG_WARNING("CAUTION: Possibly forged READ_BOOK packet received.\n");
 				  break;
 				}
-				read_network_book((char*)in_data+3, data_length-3);
+				read_network_book(in_data+3, data_length-3);
 			}
 			break;
 
@@ -2139,8 +2202,8 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 			}
 			//printf("ADD MARKER: %i %i %i %s %s\n",sm->id,sm->x,sm->y,sm->map_name,sm->text);
 			if(!server_marks) init_server_markers();
-			hash_delete(server_marks,(NULL+sm->id)); //remove old marker if present
-			hash_add(server_marks,(NULL+sm->id),(void*)sm);
+			hash_delete(server_marks, (void *)(uintptr_t)sm->id); //remove old marker if present
+			hash_add(server_marks, (void *)(uintptr_t)sm->id,(void*)sm);
 			save_server_markings();
 			load_map_marks();//load again, so the new marker is added correctly.
 			break;
@@ -2154,8 +2217,8 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 				  break;
 				}
 			id=SDL_SwapLE16(*((short *)(in_data+3)));
-			hash_delete(server_marks,(NULL+id)); //remove marker if present
-			save_server_markings();			
+			hash_delete(server_marks,(void *)(uintptr_t)id); //remove marker if present
+			save_server_markings();
 			load_map_marks();//load again, so the new marker is removed correctly.
 			break;
 			}
@@ -2228,22 +2291,32 @@ void process_message_from_server (const Uint8 *in_data, int data_length)
 
 
 /* Set the state to *disconnected from the server*, showing messages and recording time. */
-void enter_disconnected_state(char *message)
+void enter_disconnected_state(const char *message)
 {
 	char str[256];
 	short tgm = real_game_minute;
+	if (disconnected)
+		return;
+	disconnected = 1;
 	safe_snprintf(str, sizeof(str), "<%1d:%02d>: %s [%s]", tgm/60, tgm%60,
 		disconnected_from_server, (message != NULL) ?message : "Grue?");
 	LOG_TO_CONSOLE(c_red2, str);
 	LOG_TO_CONSOLE(c_red2, alt_x_quit);
-	disconnected = 1;
 #ifdef NEW_SOUND
 	stop_all_sounds();
 	do_disconnect_sound();
 #endif // NEW_SOUND
 	disconnect_time = SDL_GetTicks();
+	clear_now_harvesting();
 }
 
+/* for a disconnect from the server and the normal reconnect on keypress */
+void force_server_disconnect(const char *message)
+{
+	enter_disconnected_state(message);
+	SDLNet_TCP_Close(my_socket);
+	my_socket = 0;
+}
 
 /* Initiates a test for server connection, the client will enter the disconnected state if needed */
 void start_testing_server_connection(void)

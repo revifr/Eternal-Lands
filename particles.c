@@ -7,9 +7,11 @@
 #include "particles.h"
 #include "asc.h"
 #include "draw_scene.h"
+#include "elconfig.h"
 #include "errors.h"
+#ifdef OPENGL_TRACE
 #include "gl_init.h"
-#include "init.h"
+#endif
 #include "pathfinder.h"
 #include "string.h"
 #include "sound.h"
@@ -34,7 +36,7 @@
 #include "image_loading.h"
 
 #ifdef NEW_SOUND
-int real_add_particle_sys (const char *file_name, float x_pos, float y_pos, float z_pos, unsigned int dynamic);
+static int real_add_particle_sys (const char *file_name, float x_pos, float y_pos, float z_pos, unsigned int dynamic);
 #endif // NEW_SOUND
 
 #define TELEPORTER_PARTICLE_SYS 0
@@ -137,7 +139,6 @@ particle_sys_def *load_particle_def(const char *filename)
 	if (!fscanf_error && fscanf(f,"%i\n",&def->part_sys_type) != 1) fscanf_error = 2;
 	if (!fscanf_error && fscanf(f,"%x,%x\n",&def->sblend,&def->dblend) != 2) fscanf_error = 3;
 	if (!fscanf_error && fscanf(f,"%i\n",&def->total_particle_no) != 1) fscanf_error = 4;
-	def->total_particle_no*=(float)particles_percentage/100.0;
 	if (!fscanf_error && fscanf(f,"%i\n",&def->ttl) != 1) fscanf_error = 5;
 	if (!fscanf_error && fscanf(f,"%i\n",&def->part_texture) != 1) fscanf_error = 6;
 	if (!fscanf_error && fscanf(f,"%f\n",&def->part_size) != 1) fscanf_error = 7;
@@ -561,45 +562,39 @@ void destroy_all_particles()
 
 }
 #ifndef MAP_EDITOR
-void add_fire_at_tile (int kind, Uint16 x_tile, Uint16 y_tile)
+void add_fire_at_tile (int kind, Uint16 x_tile, Uint16 y_tile, float z)
 {
 	float x = 0.5f * x_tile + 0.25f;
 	float y = 0.5f * y_tile + 0.25f;
-	float z = 0.0;
-#ifdef NEW_SOUND
-	int snd;
-#endif // NEW_SOUND
 
 	switch (kind)
 	{
 		case 2:
-			ec_create_campfire(x, y, z, 0.0, 1.0, (poor_man ? 6 : 10), 3.1);
-#ifdef NEW_SOUND
-			snd = get_sound_index_for_particle_file_name("./particles/fire_big.part");
-#endif // NEW_SOUND
+			add_particle_sys ("./particles/fire_big.part", x, y, z, 1);
 			break;
 		case 1:
 		default:
-			ec_create_campfire(x, y, z, 0.0, 1.0, (poor_man ? 6 : 10), 2.4);
-#ifdef NEW_SOUND
-			snd = get_sound_index_for_particle_file_name("./particles/fire_small.part");
-#endif // NEW_SOUND
+			add_particle_sys ("./particles/fire_small.part", x, y, z, 1);
 			break;
 	}
-#ifdef NEW_SOUND
-	if (sound_on && snd >= 0)
-	{
-		add_particle_sound(snd, x_tile, y_tile);
-	}
-#endif // NEW_SOUND
 }
 
 void remove_fire_at_tile (Uint16 x_tile, Uint16 y_tile)
 {
+	size_t i;
 	float x = 0.5f * x_tile + 0.25f;
 	float y = 0.5f * y_tile + 0.25f;
 	
 	ec_delete_effect_loc_type(x, y, EC_CAMPFIRE);
+	LOCK_PARTICLES_LIST();
+	for (i = 0; i < MAX_PARTICLE_SYSTEMS; i++)
+	{
+		particle_sys *sys = particles_list[i];
+		if (particles_list[i] && strncmp (sys->def->file_name, "./particles/fire_", 17) == 0 && sys->x_pos == x && sys->y_pos == y)
+			destroy_partice_sys_without_lock(i);
+	}
+	UNLOCK_PARTICLES_LIST();
+
 #ifdef NEW_SOUND
 	stop_sound_at_location(x_tile, y_tile);
 #endif // NEW_SOUND
@@ -722,7 +717,7 @@ int add_particle_sys (const char *file_name, float x_pos, float y_pos, float z_p
 	return real_add_particle_sys(file_name, x_pos, y_pos, z_pos, dynamic);
 }
 
-int real_add_particle_sys (const char *file_name, float x_pos, float y_pos, float z_pos, unsigned int dynamic)
+static int real_add_particle_sys (const char *file_name, float x_pos, float y_pos, float z_pos, unsigned int dynamic)
 #else
 int add_particle_sys (const char *file_name, float x_pos, float y_pos, float z_pos, unsigned int dynamic)
 #endif // NEW_SOUND
@@ -962,7 +957,9 @@ void draw_text_particle_sys(particle_sys *system_id)
 
 	LOCK_PARTICLES_LIST();	//lock it to avoid timing issues
 
+#ifdef OPENGL_TRACE
 	CHECK_GL_ERRORS();
+#endif
 	bind_texture(particle_textures[system_id->def->part_texture]);
 
 	for(i=0,p=&system_id->particles[0];i<system_id->def->total_particle_no;i=i+5,p=p+5)
@@ -991,7 +988,9 @@ void draw_text_particle_sys(particle_sys *system_id)
 				}
 		}
 	UNLOCK_PARTICLES_LIST();	// release now that we are done
+#ifdef OPENGL_TRACE
 	CHECK_GL_ERRORS();
+#endif
 }
 
 void draw_point_particle_sys(particle_sys *system_id)
@@ -1009,7 +1008,9 @@ void draw_point_particle_sys(particle_sys *system_id)
 	if (local_zoom_level > 4.0)
 		local_zoom_level = 4.0;
 
+#ifdef OPENGL_TRACE
 	CHECK_GL_ERRORS();
+#endif
 	glEnable(GL_POINT_SPRITE_NV);
 	glTexEnvf(GL_POINT_SPRITE_NV,GL_COORD_REPLACE_NV,GL_TRUE);
 	glPointSize(system_id->def->part_size*(5.5f-local_zoom_level)*4.4f);
@@ -1050,7 +1051,9 @@ void draw_point_particle_sys(particle_sys *system_id)
 	glEnd();
  }
 	glDisable(GL_POINT_SPRITE_NV);
+#ifdef OPENGL_TRACE
 	CHECK_GL_ERRORS();
+#endif
 #endif
 }
 
@@ -1083,7 +1086,9 @@ void display_particles()
 	y=-camera_y;
 #endif  //SIMPLE_LOD || MAP_EDITOR
 
+#ifdef OPENGL_TRACE
 	CHECK_GL_ERRORS();
+#endif
 	glPushAttrib(GL_ENABLE_BIT|GL_DEPTH_BUFFER_BIT);
 	glDepthMask(GL_FALSE);
 	glEnable(GL_BLEND);
@@ -1155,12 +1160,20 @@ void display_particles()
 	UNLOCK_PARTICLES_LIST();
 	glDisable(GL_CULL_FACE); //Intel fix
 	glPopAttrib();
+#ifdef OPENGL_TRACE
 	CHECK_GL_ERRORS();
+#endif
 }
 
 /******************************************************************************
  *                           UPDATE FUNCTIONS                                 *
  ******************************************************************************/
+
+static int get_particles_to_add(int total_particles, int particles_count)
+{
+	return (((float)particles_percentage / 100.0) * total_particles) - particles_count;
+}
+
 void update_fountain_sys(particle_sys *system_id) {
 	int i,j;
 	int total_particle_no;
@@ -1172,7 +1185,7 @@ void update_fountain_sys(particle_sys *system_id) {
 	//see if we need to add new particles
 	LOCK_PARTICLES_LIST();
 	if(system_id->ttl)
-		particles_to_add=total_particle_no-system_id->particle_count;
+		particles_to_add = get_particles_to_add(total_particle_no, system_id->particle_count);
 
 	if(particles_to_add) {
 		for(j=i=0;i<particles_to_add;i++)
@@ -1280,7 +1293,7 @@ void update_fire_sys(particle_sys *system_id)
 	LOCK_PARTICLES_LIST();
 
 	if(system_id->ttl)
-		particles_to_add=total_particle_no-system_id->particle_count;
+		particles_to_add = get_particles_to_add(total_particle_no, system_id->particle_count);
 
 	for(j=i=0;i<particles_to_add;i++)
 		{
@@ -1336,7 +1349,7 @@ void update_teleporter_sys(particle_sys *system_id)
 	LOCK_PARTICLES_LIST();
 
 	if(system_id->ttl)
-		particles_to_add=total_particle_no-system_id->particle_count;
+		particles_to_add = get_particles_to_add(total_particle_no, system_id->particle_count);
 	for(j=i=0;i<particles_to_add;i++)
 		{
 			//find a free space
@@ -1391,7 +1404,7 @@ void update_teleport_sys(particle_sys *system_id)
 	//see if we need to add new particles
 	LOCK_PARTICLES_LIST();
 	if(system_id->ttl)
-		particles_to_add=total_particle_no-system_id->particle_count;
+		particles_to_add = get_particles_to_add(total_particle_no, system_id->particle_count);
 	for(j=i=0;i<particles_to_add;i++)
 		{
 			//find a free space
@@ -1447,7 +1460,7 @@ void update_bag_part_sys(particle_sys *system_id)
 	//see if we need to add new particles
 	LOCK_PARTICLES_LIST();
 	if(system_id->ttl)
-		particles_to_add=total_particle_no-system_id->particle_count;
+		particles_to_add = get_particles_to_add(total_particle_no, system_id->particle_count);
 	for(j=i=0;i<particles_to_add;i++)
 		{
 			//find a free space

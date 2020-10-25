@@ -27,7 +27,37 @@ typedef struct
 }knowledge;
 
 extern knowledge knowledge_list[KNOWLEDGE_LIST_SIZE]; /*!< global array of knowledgeable items */
-extern int	knowledge_count;
+
+/*!
+ * \brief   Derive the resring complete and total from the output of the server "#research" command.
+ *
+ * \param knowledge_id  the knowledge id
+ *
+ * returns	1 if it was a request, otherwise 0 so it was a user request.
+ *
+ * \callgraph
+ */
+int get_true_knowledge_info(const char *message);
+
+/*!
+ * \brief   When we get HERE_YOUR_STATS, send server #research command to get true research info.
+ *
+ * \param knowledge_id  the knowledge id
+ *
+ * \callgraph
+ */
+void request_true_knowledge_info(void);
+
+/*!
+ * \brief   Get the book status tag, read, unread or reading.
+ *
+ * \param knowledge_id  the knowledge id
+ *
+ * returns	return the reading status tag, or an empty string if not a valid book id.
+ *
+ * \callgraph
+ */
+const char *get_knowledge_state_tag(size_t index);
 
 /*!
  * \ingroup knowledge_window
@@ -116,6 +146,14 @@ void update_research_rate(void);
  * \callgraph
  */
 void set_knowledge_string(const Uint8 *in_data, int data_length);
+
+/*!
+ * \ingroup knowledge_window
+ * \brief Read the knowledge list from file.
+ *
+ * \callgraph
+ */
+void load_knowledge_list(void);
 
 #ifdef __cplusplus
 } // extern "C"

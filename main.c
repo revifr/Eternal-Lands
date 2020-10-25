@@ -1,3 +1,6 @@
+#ifdef OSX
+#include <libgen.h>
+#endif
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -28,6 +31,7 @@
 #include "console.h"
 #include "counters.h"
 #include "cursors.h"
+#include "dialogues.h"
 #include "draw_scene.h"
 #include "e3d.h"
 #include "elc_private.h"
@@ -48,6 +52,7 @@
 #include "minimap.h"
 #include "multiplayer.h"
 #include "particles.h"
+#include "password_manager.h"
 #include "pm_log.h"
 #include "questlog.h"
 #include "queue.h"
@@ -79,15 +84,10 @@
 #include "fsaa/fsaa.h"
 #endif	/* FSAA */
 
+int exit_now=0;
+int restart_required=0;
 Uint32 cur_time=0, last_time=0;//for FPS
 
-char version_string[]=VER_STRING;
-int	client_version_major=VER_MAJOR;
-int client_version_minor=VER_MINOR;
-int client_version_release=VER_RELEASE;
-int	client_version_patch=VER_BUILD;
-int version_first_digit=10;	//protocol/game version sent to server
-int version_second_digit=27;
 
 int gargc;
 char **  gargv;
@@ -97,43 +97,57 @@ void cleanup_mem(void)
 {
 	int i;
 
+	LOG_INFO("destroy_url_list()");
 	destroy_url_list();
+	LOG_INFO("history_destroy()");
 	history_destroy();
+	LOG_INFO("command_cleanup()");
 	command_cleanup();
+	LOG_INFO("destroy_buddy_queue()");
 	destroy_buddy_queue();
+	LOG_INFO("cleanup_manufacture()");
 	cleanup_manufacture();
+	LOG_INFO("cleanup_text_buffers()");
 	cleanup_text_buffers();
-	cleanup_fonts();
+	LOG_INFO("destroy_all_actors()");
 	destroy_all_actors();
+	LOG_INFO("end_actors_lists()");
 	end_actors_lists();
+	LOG_INFO("cleanup_lights()");
 	cleanup_lights();
 	/* 2d objects */
+	LOG_INFO("destroy_all_2d_objects()");
 	destroy_all_2d_objects();
+	LOG_INFO("destroy_all_2d_object_defs()");
 	destroy_all_2d_object_defs();
 	/* 3d objects */
+	LOG_INFO("destroy_all_3d_objects()");
 	destroy_all_3d_objects();
 	/* caches */
 	cache_e3d->free_item = &destroy_e3d;
+	LOG_INFO("cache_delete()");
 	cache_delete(cache_e3d);
 	cache_e3d = NULL;
+	LOG_INFO("free_texture_cache()");
 	free_texture_cache();
 	// This should be fixed now  Sir_Odie
+	LOG_INFO("cache_delete()");
 	cache_delete(cache_system);
 	cache_system = NULL;
 	/* map location information */
-	for (i = 0; continent_maps[i].name; i++)
-	{
-	    free(continent_maps[i].name);
-	}
-	free (continent_maps);
+	LOG_INFO("cleanup_mapinfo()");
+	cleanup_mapinfo();
 
+	LOG_INFO("destroy_hash_table()");
 	destroy_hash_table(server_marks);
-	
+
+	LOG_INFO("video_modes[]");
 	for (i = 0; i < video_modes_count; i++)
 	{
 		if (video_modes[i].name)
 			free(video_modes[i].name);
 	}
+	LOG_INFO("free_shaders()");
 	free_shaders();
 }
 
@@ -155,7 +169,7 @@ int start_rendering()
 	queue_initialise(&message_queue);
 	network_thread_data[0] = message_queue;
 	network_thread_data[1] = &done;
-	network_thread = SDL_CreateThread(get_message_from_server, network_thread_data);
+	network_thread = SDL_CreateThread(get_message_from_server, "NetworkThread", network_thread_data);
 
 	/* Loop until done. */
 	while( !done )
@@ -164,7 +178,7 @@ int start_rendering()
 
 			// handle SDL events
 			in_main_event_loop = 1;
-			while( SDL_PollEvent( &event ) )
+			while( SDL_PollEvent( &event ) && !done)
 				{
 					done = HandleEvent(&event);
 				}
@@ -191,7 +205,7 @@ int start_rendering()
 			olc_process();
 #endif	//OLC
 			my_tcp_flush(my_socket);    // make sure the tcp output buffer is set
-			
+
 			if (have_a_map && cur_time > last_frame_and_command_update + 60) {
 				LOCK_ACTORS_LISTS();
 				next_command();
@@ -211,7 +225,7 @@ int start_rendering()
 			weather_sound_control();
 #endif	//NEW_SOUND
 
-			if(!limit_fps || (cur_time-last_time && 1000/(cur_time-last_time) <= limit_fps))
+			if(!max_fps || (cur_time-last_time && 1000/(cur_time-last_time) <= max_fps))
 			{
 				weather_update();
 
@@ -240,91 +254,145 @@ int start_rendering()
 	if(!done) {
 		done = 1;
 	}
-	LOG_INFO("Client closed");
+	LOG_INFO("Client closing");
+	LOG_INFO("SDL_WaitThread(network_thread)");
 	SDL_WaitThread(network_thread,&done);
+	LOG_INFO("queue_destroy()");
 	queue_destroy(message_queue);
+	LOG_INFO("free_pm_log()");
 	free_pm_log();
 
+	// window positions are proportionally adjusted ready for the next client run
+	LOG_INFO("restore_window_proportionally()");
+	restore_window_proportionally();
+
 	//save all local data
-	save_local_data(NULL, 0);
+	LOG_INFO("save_local_date()");
+	save_local_data();
 
 #ifdef PAWN
+	LOG_INFO("cleanup_pawn()");
 	cleanup_pawn ();
 #endif
 
 #ifdef NEW_SOUND
+	LOG_INFO("destroy_sound()");
 	destroy_sound();		// Cleans up physical elements of the sound system and the streams thread
+	LOG_INFO("clear_sound_data()");
 	clear_sound_data();		// Cleans up the config data
 #endif // NEW_SOUND
+	LOG_INFO("ec_destroy_all_effects()");
 	ec_destroy_all_effects();
 	if (have_a_map)
 	{
+		LOG_INFO("destroy_map()");
 		destroy_map();
+		LOG_INFO("free_buffers()");
 		free_buffers();
 	}
+	LOG_INFO("cleanup_dialogues()");
+	cleanup_dialogues();
+	LOG_INFO("passmngr_destroy()");
+	passmngr_destroy();
+	LOG_INFO("unload_questlog()");
 	unload_questlog();
+	LOG_INFO("save_item_lists()");
 	save_item_lists();
+	LOG_INFO("free_emotes()");
 	free_emotes();
+	LOG_INFO("free_actor_defs()");
 	free_actor_defs();
-	free_books();
+	LOG_INFO("free_vars()");
 	free_vars();
+	LOG_INFO("cleanup_rules()");
 	cleanup_rules();
 	//save_exploration_map();
+	LOG_INFO("cleanup_counters()");
 	cleanup_counters();
+	LOG_INFO("cleanup_chan_names()");
 	cleanup_chan_names();
+	LOG_INFO("cleanup_hud()");
 	cleanup_hud();
+	LOG_INFO("destroy_trade_log()");
 	destroy_trade_log();
+	LOG_INFO("destroy_user_menus()");
 	destroy_user_menus();
+	LOG_INFO("destroy_all_root_windows()");
 	destroy_all_root_windows();
+	LOG_INFO("SDL_RemoveTimer()");
 	SDL_RemoveTimer(draw_scene_timer);
+	LOG_INFO("SDL_RemoveTimer()");
 	SDL_RemoveTimer(misc_timer);
+	LOG_INFO("end_particles()");
 	end_particles ();
+	LOG_INFO("free_bbox_tree()");
 	free_bbox_tree(main_bbox_tree);
 	main_bbox_tree = NULL;
+	LOG_INFO("free_astro_buffer()");
 	free_astro_buffer();
+	LOG_INFO("free_translations()");
 	free_translations();
+	LOG_INFO("free_skybox()");
 	free_skybox();
 	/* Destroy our GL context, etc. */
+	LOG_INFO("SDL_QuitSubSystem(SDL_INIT_AUDIO)");
 	SDL_QuitSubSystem(SDL_INIT_AUDIO);
+	LOG_INFO("SDL_QuitSubSystem(SDL_INIT_TIMER)");
 	SDL_QuitSubSystem(SDL_INIT_TIMER);
 /*#ifdef WINDOWS
 	// attempt to restart if requested
 	if(restart_required > 0){
 		LOG_INFO("Restarting %s", win_command_line);
-		SDL_CreateThread(system, win_command_line);
+		SDL_CreateThread(system, "MainThread", win_command_line);
 	}
 #endif  //WINDOWS
 */
-#ifdef NEW_SOUND
-	final_sound_exit();
-#endif
+
 #ifdef	CUSTOM_UPDATE
+	LOG_INFO("stopp_custom_update()");
 	stopp_custom_update();
 #endif	/* CUSTOM_UPDATE */
+	LOG_INFO("clear_zip_archives()");
 	clear_zip_archives();
+	LOG_INFO("clean_update()");
 	clean_update();
 
+	LOG_INFO("cleanup_tcp()");
 	cleanup_tcp();
 
-	if (use_frame_buffer) free_reflection_framebuffer();
+	if (use_frame_buffer)
+	{
+		LOG_INFO("free_reflection_framebuffer()");
+		free_reflection_framebuffer();
+	}
 
+	LOG_INFO("cursors_cleanup()");
 	cursors_cleanup();
 
-	printf("doing SDL_Quit\n");
-	fflush(stdout);
-	SDL_Quit( );
-	printf("done SDL_Quit\n");
-	fflush(stdout);
+	LOG_INFO("SDL_Quit()");
+	SDL_Quit();
+	LOG_INFO("cleanup_mem()");
 	cleanup_mem();
+	LOG_INFO("xmlCleanupParser()");
 	xmlCleanupParser();
+	LOG_INFO("FreeXML()");
 	FreeXML();
 
+#ifdef NEW_SOUND
+	LOG_INFO("final_sound_exit()");
+	final_sound_exit();
+#endif
+
+	LOG_INFO("exit_logging()");
 	exit_logging();
+
+	printf("Exit Complete\n"); fflush(stdout);
+	fflush(stdout);
 
 	return(0);
 }
 
-void	read_command_line()
+void	read_command_line(void)
 {
 	int i=1;
 	if(gargc<2)return;
@@ -358,7 +426,7 @@ char * check_server_id_on_command_line()
 		return "";
 
 	// FIXME!! This should parse for -options rather than blindly returning the last option!
-	
+
 	return gargv[gargc - 1];
 }
 
@@ -434,12 +502,29 @@ void check_log_level_on_command_line()
 	}
 }
 
+#ifdef OSX
+// we need to move to the Data directory so server.lst can be found
+void setupWorkingDirectory(const char *argv0, size_t len)
+{
+	char *path = malloc(len + 1);
+	strncpy(path, argv0, len);
+	if ( ! ((chdir(dirname(path)) == 0) &&
+		(chdir("../Resources/data") == 0)))
+		fprintf(stderr, "Failed to change to data directory path\n");
+	free(path);
+}
+#endif
+
 #ifdef WINDOWS
 int Main(int argc, char **argv)
 #else
 int main(int argc, char **argv)
 #endif
 {
+#ifdef OSX
+	if (argc > 0) // should always be true
+		setupWorkingDirectory(argv[0], strlen(argv[0]));
+#endif
 #ifdef MEMORY_DEBUG
 	elm_init();
 #endif //MEMORY_DEBUG

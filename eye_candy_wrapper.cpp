@@ -5,10 +5,12 @@
 #include "cal3d_wrapper.h"
 #include "client_serv.h" // For mine_type defines
 #include "draw_scene.h"
+#include "elconfig.h"
 #include "errors.h"
+#if !defined(MAP_EDITOR)
 #include "gamewin.h"
+#endif
 #include "gl_init.h"
-#include "init.h"
 #include "map.h"
 #include "missiles.h"
 #include "particles.h"
@@ -426,7 +428,7 @@ extern "C" void ec_idle()
 	ec_last_time = ec_cur_time;
 	ec_cur_time = new_time;
 
-	eye_candy.max_fps = (limit_fps ? limit_fps : 255);
+	eye_candy.max_fps = (max_fps ? max_fps : 255);
 
 	if (use_eye_candy && ec_last_time % 1000000 >= ec_cur_time % 1000000)
 		ec_heartbeat();
@@ -1020,7 +1022,7 @@ extern "C" int ec_change_target(ec_reference reference, int index, float x, floa
 extern "C" ec_reference ec_create_effect_from_map_code(char* code, float x, float y, float z, int LOD)
 {
 	unsigned char raw_code[54];
-	const unsigned char*const code2 = (const unsigned char*const) code;
+	unsigned char const * const code2 = reinterpret_cast<unsigned char const *>(code);
 	int i = 0;
 
 	while (i < 18)

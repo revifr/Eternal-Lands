@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "elconfig.h"
+#include "chat.h"
 #include "context_menu.h"
 #include "hud.h"
 #include "init.h"
@@ -10,18 +11,77 @@
 #include "asc.h"
 #include "cursors.h"
 #include "gl_init.h"
-#include "global.h"
 #include "interface.h"
 #include "keys.h"
 #include "misc.h"
 #include "multiplayer.h"
-#include "storage.h"
 #include "textures.h"
-#include "trade.h"
 #include "widgets.h"
 #include "sound.h"
 
 #define ELW_WIN_MAX 128
+
+const GLfloat gui_color[3] = { 0.77f, 0.57f, 0.39f };
+
+// Managed Windows
+// Provide common features for selected windows including id, position, name,
+// scaling, activation keys and create/display/hide functions and information.
+
+// structure for indivual window information
+typedef struct {
+	int id;
+	int pos_x;
+	int pos_y;
+	int prop_pos;
+	float pos_ratio_x;
+	float pos_ratio_y;
+	int on_top;
+	const char * icon_name;
+	int hideable;
+	int was_open;
+	float scale;
+	el_key_def *key_def;
+	void (*display)(void);
+	void (*toggle)(void);
+	int (*showable)(void);
+} managed_window_list_def;
+
+// structure for the managed window array and any related vars
+typedef struct {
+	managed_window_list_def list[MW_MAX];
+	int disable_mouse_or_keys_scaling;
+} managed_window_def;
+
+static managed_window_def managed_windows =
+{
+	.list[MW_TRADE] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "trade", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = display_trade_menu, .toggle = NULL, .showable = NULL },
+	.list[MW_ITEMS] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "invent", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_ITEMS, .display = display_items_menu, .toggle = NULL, .showable = NULL },
+	.list[MW_BAGS] = { .id = -1, .pos_x = 400, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "bags", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_SPELLS] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "spell", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_SIGILS, .display = display_sigils_menu, .toggle = NULL, .showable = NULL },
+	.list[MW_STORAGE] = { .id = -1, .pos_x = 100, .pos_y = 100, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "storage", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = display_storage_menu, .toggle = NULL, .showable = NULL },
+	.list[MW_MANU] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "manu", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_MANUFACTURE, .display = display_manufacture_menu, .toggle = NULL, .showable = NULL },
+	.list[MW_EMOTE] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "emotewin", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_EMOTES, .display = display_emotes_menu, .toggle = NULL, .showable = NULL },
+	.list[MW_QUESTLOG] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "quest", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_QUESTLOG, .display = display_questlog, .toggle = NULL, .showable = NULL },
+	.list[MW_INFO] = { .id = -1, .pos_x = 150, .pos_y = 70, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "info", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = display_tab_info, .toggle = NULL, .showable = NULL },
+	.list[MW_BUDDY] = { .id = -1, .pos_x = 150, .pos_y = 70, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "buddy", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_BUDDY, .display = display_buddy, .toggle = NULL, .showable = NULL },
+	.list[MW_STATS] = { .id = -1, .pos_x = 150, .pos_y = 70, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "stats", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = display_tab_stats, .toggle = NULL, .showable = NULL },
+	.list[MW_HELP] = { .id = -1, .pos_x = 150, .pos_y = 70, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "help", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = display_tab_help, .toggle = NULL, .showable = NULL },
+	.list[MW_RANGING] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "range", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_RANGINGWIN, .display = display_range_win, .toggle = NULL, .showable = NULL },
+	.list[MW_ACHIEVE] = { .id = -1, .pos_x = 0, .pos_y = 0, .prop_pos = 0, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "achievements", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_DIALOGUE] = { .id = -1, .pos_x = 1, .pos_y = 1, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "dialogue", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_QUICKBAR] = { .id = -1, .pos_x = 100, .pos_y = 100, .prop_pos = 0, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "quickbar", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_QUICKSPELLS] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 0, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "quickspells", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_CONFIG] = { .id = -1, .pos_x = 10, .pos_y = 10, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "opts", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_OPTIONS, .display = display_elconfig_win, .toggle = NULL, .showable = NULL },
+	.list[MW_MINIMAP] = { .id = -1, .pos_x = 5, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "minimap", .hideable = 1, .was_open = 0, .scale = 1.0f, .key_def = &K_MINIMAP, .display = display_minimap, .toggle = NULL, .showable = NULL },
+	.list[MW_ASTRO] = { .id = -1, .pos_x = 10, .pos_y = 20, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 1, .icon_name = "astro", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_TABMAP] = { .id = -1, .pos_x = 0, .pos_y = 0, .prop_pos = 0, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "map", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_CONSOLE] = { .id = -1, .pos_x = 0, .pos_y = 0, .prop_pos = 0, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "console", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = NULL, .display = NULL, .toggle = NULL, .showable = NULL },
+	.list[MW_CHAT] = { .id = -1, .pos_x = 0, .pos_y = 0, .prop_pos = 1, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "chat", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = &K_CHAT, .display = open_chat, .toggle = toggle_chat, .showable = is_chat_shown },
+#ifdef ECDEBUGWIN
+	.list[MW_ECDEBUG] = { .id = -1, .pos_x = 10, .pos_y = 10, .prop_pos = 0, .pos_ratio_x = 1.0f, .pos_ratio_y = 1.0f, .on_top = 0, .icon_name = "ecdebug", .hideable = 0, .was_open = 0, .scale = 1.0f, .key_def = &K_ECDEBUGWIN, .display = display_ecdebugwin, .toggle = NULL, .showable = NULL },
+#endif
+	.disable_mouse_or_keys_scaling = 0
+};
 
 windows_info	windows_list;	// the master list of windows
 
@@ -34,15 +94,45 @@ static int last_opaque_window_backgrounds = 0;
 int display_window(int win_id);
 int	drag_in_window(int win_id, int x, int y, Uint32 flags, int dx, int dy);
 int	mouseover_window(int win_id, int x, int y);	// do mouseover processing for a window
-int	keypress_in_window(int win_id, int x, int y, Uint32 key, Uint32 unikey);	// keypress in the window
+int	keypress_in_window(int win_id, int x, int y, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod);	// keypress in the window
 
 /*
  * The intent of the windows system is to create the window once
- * and then hide the window when you don't wantto use it.
+ * and then hide the window when you don't want to use it.
  *
  * Note: In the handlers, all cursor coordinates are relative to the window
  *
  */
+
+void update_windows_custom_scale(float *changed_window_custom_scale)
+{
+	size_t win_id;
+	// to avoid getting out of step, scale all the variables first, then call the handers
+	for (win_id=0; win_id < windows_list.num_windows; win_id++)
+	{
+		window_info *win = &windows_list.window[win_id];
+		if ((win->custom_scale != NULL) && (win->custom_scale == changed_window_custom_scale))
+			update_window_scale(win, get_global_scale());
+	}
+	for (win_id=0; win_id < windows_list.num_windows; win_id++)
+	{
+		window_info *win = &windows_list.window[win_id];
+		if ((win->custom_scale != NULL) && (win->custom_scale == changed_window_custom_scale) && (win->ui_scale_handler != NULL))
+			(*win->ui_scale_handler)(win);
+	}
+}
+
+void set_window_custom_scale(int win_id, enum managed_window_enum managed_win)
+{
+	window_info *win = NULL;
+	if (win_id < 0 || win_id >= windows_list.num_windows || managed_win >= MW_MAX)
+		return;
+	win = &windows_list.window[win_id];
+	win->custom_scale = &managed_windows.list[managed_win].scale;
+	update_window_scale(win, get_global_scale());
+	if (win->ui_scale_handler)
+		(*win->ui_scale_handler)(win);
+}
 
 void update_window_scale(window_info *win, float scale_factor)
 {
@@ -50,23 +140,25 @@ void update_window_scale(window_info *win, float scale_factor)
 		return;
 	if (win->flags & ELW_USE_UISCALE)
 	{
-		win->current_scale = scale_factor;
+		win->current_scale = scale_factor * ((win->custom_scale == NULL) ?1.0f : *win->custom_scale);
+		win->current_scale_small = win->current_scale * DEFAULT_SMALL_RATIO;
 		win->box_size = (int)(0.5 + win->current_scale * ELW_BOX_SIZE);
-		win->title_height = (int)(0.5 + win->current_scale * ELW_TITLE_HEIGHT);
-		win->small_font_len_x = (int)(0.5 + win->current_scale * SMALL_FONT_X_LEN);
-		win->small_font_len_y = (int)(0.5 + win->current_scale * SMALL_FONT_Y_LEN);
-		win->default_font_len_x = (int)(0.5 + win->current_scale * DEFAULT_FONT_X_LEN);
-		win->default_font_len_y = (int)(0.5 + win->current_scale * DEFAULT_FONT_Y_LEN);
+		win->small_font_max_len_x = get_max_char_width_zoom(win->font_category, win->current_scale_small);
+		win->small_font_len_y = get_line_height(win->font_category, win->current_scale_small);
+		win->default_font_max_len_x = get_max_char_width_zoom(win->font_category, win->current_scale);
+		win->default_font_len_y = get_line_height(win->font_category, win->current_scale);
+		win->title_height = max2i(win->small_font_len_y, win->current_scale*ELW_TITLE_HEIGHT);
 	}
 	else
 	{
 		win->current_scale = 1.0;
+		win->current_scale_small = win->current_scale * DEFAULT_SMALL_RATIO;
 		win->box_size = ELW_BOX_SIZE;
-		win->title_height = ELW_TITLE_HEIGHT;
-		win->small_font_len_x = (int)(0.5 + SMALL_FONT_X_LEN);
-		win->small_font_len_y = (int)(0.5 + SMALL_FONT_Y_LEN);
-		win->default_font_len_x = (int)(0.5 + DEFAULT_FONT_X_LEN);
-		win->default_font_len_y = (int)(0.5 + DEFAULT_FONT_Y_LEN);
+		win->small_font_max_len_x = get_max_char_width_zoom(win->font_category, DEFAULT_SMALL_RATIO);
+		win->small_font_len_y = get_line_height(win->font_category, DEFAULT_SMALL_RATIO);
+		win->default_font_max_len_x = get_max_char_width_zoom(win->font_category, 1.0);
+		win->default_font_len_y = get_line_height(win->font_category, 1.0);
+		win->title_height = max2i(win->small_font_len_y, ELW_TITLE_HEIGHT);
 	}
 }
 
@@ -88,6 +180,289 @@ void update_windows_scale(float scale_factor)
 		if(windows_list.window[win_id].window_id != win_id)
 			continue;
 		if (win->ui_scale_handler) (*win->ui_scale_handler)(win);
+	}
+}
+
+static void move_window_proportionally(int win_id, float pos_ratio_x, float pos_ratio_y)
+{
+	window_info *win = NULL;
+	int new_x, new_y;
+	if (win_id < 0 || win_id >= windows_list.num_windows)
+		return;
+	win = &windows_list.window[win_id];
+	new_x = (int)(0.5 + pos_ratio_x * ((float)win->cur_x + (float)win->len_x / 2.0f) - (float)win->len_x / 2.0f);
+	new_y = (int)(0.5 + pos_ratio_y * ((float)win->cur_y + (float)win->len_y / 2.0f) - (float)win->len_y / 2.0f);
+	move_window(win->window_id, win->pos_id, win->pos_loc, new_x, new_y);
+}
+
+void move_windows_proportionally(float pos_ratio_x, float pos_ratio_y)
+{
+	enum managed_window_enum i;
+	for (i = 0; i < MW_MAX; i++)
+	{
+		if (!managed_windows.list[i].prop_pos)
+			continue;
+		if (managed_windows.list[i].id < 0)
+		{
+			managed_windows.list[i].pos_ratio_x *= pos_ratio_x;
+			managed_windows.list[i].pos_ratio_y *= pos_ratio_y;
+		}
+		else
+		{
+			move_window_proportionally(managed_windows.list[i].id, pos_ratio_x, pos_ratio_y);
+			managed_windows.list[i].pos_ratio_x = managed_windows.list[i].pos_ratio_y = 1.0f;
+		}
+	}
+}
+
+// Called just before saving data on exit.
+// Window positions are proportionally adjusted ready for the next client run.
+// Any window instantiated at exit will be positioned correctly.
+// Any window that was not instantiated, will be positioned correctly only if
+// the next start has the same sizes as was used starting this time.
+// The case where the client will start with a different sizes than this time
+// will cause the position of uninstantiated windows to be wrong.  This will be
+// fixed when we save the managed window information as JSON.
+void restore_window_proportionally(void)
+{
+	if (!full_screen)
+	{
+		int index = video_mode - 1;
+		int new_width, new_height;
+		if (index < 0 || index >= video_modes_count)
+			index = 0;
+		if (index == 0)
+		{
+			new_width = video_user_width;
+			new_height = video_user_height;
+		} else {
+			new_width = video_modes[index].width;
+			new_height = video_modes[index].height;
+		}
+		move_windows_proportionally((float)new_width / (float)window_width, (float)new_height / (float)window_height);
+	}
+}
+
+void check_proportional_move(enum managed_window_enum managed_win)
+{
+	if (managed_win >= MW_MAX)
+		return;
+	if (managed_windows.list[managed_win].prop_pos && ((managed_windows.list[managed_win].pos_ratio_x != 1.0f) || (managed_windows.list[managed_win].pos_ratio_y != 1.0f)))
+	{
+		move_window_proportionally(managed_windows.list[managed_win].id, managed_windows.list[managed_win].pos_ratio_x, managed_windows.list[managed_win].pos_ratio_y);
+		managed_windows.list[managed_win].pos_ratio_x = managed_windows.list[managed_win].pos_ratio_y = 1.0f;
+	}
+	return;
+}
+
+enum managed_window_enum get_by_name_MW(const char *name)
+{
+	enum managed_window_enum i;
+	if (name == NULL)
+		return MW_MAX;
+	for (i = 0; i < MW_MAX; i++)
+		if (strcmp(managed_windows.list[i].icon_name, name) == 0)
+			return i;
+	return MW_MAX;
+}
+
+int get_id_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return managed_windows.list[managed_win].id;
+	else
+		return -1;
+}
+
+void set_id_MW(enum managed_window_enum managed_win, int win_id)
+{
+	if (managed_win < MW_MAX)
+		managed_windows.list[managed_win].id = win_id;
+}
+
+void set_pos_MW(enum managed_window_enum managed_win, int pos_x, int pos_y)
+{
+	if (managed_win < MW_MAX)
+	{
+		managed_windows.list[managed_win].pos_x = pos_x;
+		managed_windows.list[managed_win].pos_y = pos_y;
+	}
+}
+
+int get_pos_x_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return managed_windows.list[managed_win].pos_x;
+	else
+		return 0;
+}
+
+int get_pos_y_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return managed_windows.list[managed_win].pos_y;
+	else
+		return 0;
+}
+
+int on_top_responsive_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return managed_windows.list[managed_win].on_top;
+	else
+		return 0;
+}
+
+int not_on_top_now(enum managed_window_enum managed_win)
+{
+	if ((managed_win < MW_MAX) && managed_windows.list[managed_win].on_top && !windows_on_top)
+		return 1;
+	else
+		return 0;
+}
+
+void clear_was_open_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		managed_windows.list[managed_win].was_open = 0;
+}
+
+void set_was_open_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		managed_windows.list[managed_win].was_open = 1;
+}
+
+int was_open_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return managed_windows.list[managed_win].was_open;
+	else
+		return 0;
+}
+
+int is_hideable_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return managed_windows.list[managed_win].hideable;
+	else
+		return 0;
+}
+
+void clear_hideable_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		managed_windows.list[managed_win].hideable = 0;
+}
+
+void set_hideable_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		managed_windows.list[managed_win].hideable = 1;
+}
+
+void call_display_MW(enum managed_window_enum managed_win)
+{
+	if ((managed_win < MW_MAX) && (managed_windows.list[managed_win].display != NULL))
+		managed_windows.list[managed_win].display();
+}
+
+int match_keydef_MW(enum managed_window_enum managed_win, SDL_Keycode key_code, Uint16 key_mod)
+{
+	if ((managed_win < MW_MAX) && (managed_windows.list[managed_win].key_def != NULL))
+		return (KEY_DEF_CMP((*(managed_windows.list[managed_win].key_def)), key_code, key_mod));
+	else
+		return 0;
+}
+
+float * get_scale_WM(enum managed_window_enum managed_win)
+{
+	if (managed_win < MW_MAX)
+		return &managed_windows.list[managed_win].scale;
+	else
+		return NULL;
+}
+
+int * get_scale_flag_MW(void)
+{
+	return &managed_windows.disable_mouse_or_keys_scaling;
+}
+
+void set_save_pos_MW(enum managed_window_enum managed_win, int *pos_x, int *pos_y)
+{
+	if (managed_win >= MW_MAX)
+		return;
+	if (managed_windows.list[managed_win].id >= 0)
+	{
+		*pos_x = windows_list.window[managed_windows.list[managed_win].id].cur_x;
+		*pos_y = windows_list.window[managed_windows.list[managed_win].id].cur_y;
+	}
+	else
+	{
+		*pos_x = managed_windows.list[managed_win].pos_x;
+		*pos_y = managed_windows.list[managed_win].pos_y;
+	}
+}
+
+void toggle_window_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win >= MW_MAX)
+		return;
+	if (managed_windows.list[managed_win].toggle != NULL)
+		managed_windows.list[managed_win].toggle();
+	else
+		toggle_window(get_id_MW(managed_win));
+}
+
+int get_window_showable_MW(enum managed_window_enum managed_win)
+{
+	if (managed_win >= MW_MAX)
+		return 0;
+	if (managed_windows.list[managed_win].showable != NULL)
+		return managed_windows.list[managed_win].showable();
+	else
+		return get_window_showable(get_id_MW(managed_win));
+}
+
+static void change_window_font(window_info *win, font_cat cat)
+{
+	widget_list *W;
+
+	if (win->font_category == cat)
+	{
+		if (win->flags & ELW_USE_UISCALE)
+		{
+			win->small_font_max_len_x = get_max_char_width_zoom(win->font_category, win->current_scale_small);
+			win->small_font_len_y = get_line_height(win->font_category, win->current_scale_small);
+			win->default_font_max_len_x = get_max_char_width_zoom(win->font_category, win->current_scale);
+			win->default_font_len_y = get_line_height(win->font_category, win->current_scale);
+			win->title_height = max2i(win->small_font_len_y, win->current_scale*ELW_TITLE_HEIGHT);
+		}
+		else
+		{
+			win->small_font_max_len_x = get_max_char_width_zoom(win->font_category,
+				DEFAULT_SMALL_RATIO);
+			win->small_font_len_y = get_line_height(win->font_category, DEFAULT_SMALL_RATIO);
+			win->default_font_max_len_x = get_max_char_width_zoom(win->font_category, 1.0);
+			win->default_font_len_y = get_line_height(win->font_category, 1.0);
+			win->title_height = max2i(win->small_font_len_y, ELW_TITLE_HEIGHT);
+		}
+	}
+
+	for (W = win->widgetlist; W; W = W->next)
+		widget_handle_font_change(W, cat);
+
+	if (win->font_change_handler)
+		(*win->font_change_handler)(win, cat);
+}
+
+void change_windows_font(font_cat cat)
+{
+	int win_id;
+	for (win_id = 0; win_id < windows_list.num_windows; ++win_id)
+	{
+		window_info *win = &windows_list.window[win_id];
+		change_window_font(win, cat);
 	}
 }
 
@@ -121,7 +496,7 @@ void	display_windows(int level)
 				}
 			}
 		}
-		
+
 		if(next_id <= -9999)
 		{
 			break;
@@ -131,7 +506,7 @@ void	display_windows(int level)
 			id= next_id;
 		}
 	}
-	
+
 	top_SWITCHABLE_OPAQUE_window_drawn = -1;
 	if(level > 0)
 	{
@@ -158,7 +533,7 @@ void	display_windows(int level)
 						// remember the top window that has ELW_SWITCHABLE_OPAQUE
 						if (windows_list.window[i].flags&ELW_SWITCHABLE_OPAQUE)
 							top_SWITCHABLE_OPAQUE_window_drawn = i;
-					} 
+					}
 					else if (windows_list.window[i].order > id && windows_list.window[i].order < next_id)
 					{
 						// try to find the next level
@@ -187,7 +562,7 @@ int	click_in_windows(int mx, int my, Uint32 flags)
 	int	next_id;
 	int	first_win= -1;
 	int i;
-	
+
 	/* only activate context menu on unmodified right click */
 	int cm_try_activate = cm_pre_show_check(flags);
 
@@ -230,7 +605,7 @@ int	click_in_windows(int mx, int my, Uint32 flags)
 				id= next_id;
 		}
 	}
-	
+
 	// now check the background windows in the proper order
 	id= -9999;
 	while(done <= 0)
@@ -253,7 +628,7 @@ int	click_in_windows(int mx, int my, Uint32 flags)
 						cm_post_show_check(0);
 						return i;
 					}
-				} 
+				}
 				else if(windows_list.window[i].order > id && windows_list.window[i].order < next_id)
 				{
 					// try to find the next level
@@ -266,7 +641,7 @@ int	click_in_windows(int mx, int my, Uint32 flags)
 		else
 			id= next_id;
 	}
-	
+
 	cm_post_show_check(0);
 
 	// nothing to click on, do a select instead
@@ -289,18 +664,18 @@ int	drag_in_windows(int mx, int my, Uint32 flags, int dx, int dy)
 
 	// ignore a drag of 0, but say we processed
 	if(dx == 0 && dy == 0)	return -1;
-	
+
 	if (cur_drag_window)
 	{
-		// a drag was started from cur_drag_window, let that window 
+		// a drag was started from cur_drag_window, let that window
 		// handle it, regardless of where the cursor is
-		
+
 		done = drag_in_window (cur_drag_window->window_id, mx, my, flags, dx, dy);
 		if (done > 0)
 		{
 			if (cur_drag_window->displayed)
 				// select this window to the front
-				select_window (cur_drag_window->window_id); 
+				select_window (cur_drag_window->window_id);
 			return cur_drag_window->window_id;
 		}
 		else
@@ -320,7 +695,7 @@ int	drag_in_windows(int mx, int my, Uint32 flags, int dx, int dy)
 			next_id= 0;
 			for(i=0; i < windows_list.num_windows; i++)
 			{
-				win = &(windows_list.window[i]);				
+				win = &(windows_list.window[i]);
 				// only look at displayed windows
 				if (win->displayed)
 				{
@@ -340,7 +715,7 @@ int	drag_in_windows(int mx, int my, Uint32 flags, int dx, int dy)
 							// drag started in this window
 							return -1;
 						}
-					} 
+					}
 					else if (win->order < id && win->order > next_id)
 					{
 						// try to find the next level
@@ -354,7 +729,7 @@ int	drag_in_windows(int mx, int my, Uint32 flags, int dx, int dy)
 				id= next_id;
 		}
 	}
-	
+
 	// now check the background windows in the proper order
 	id= -9999;
 	while (done <= 0)
@@ -381,7 +756,7 @@ int	drag_in_windows(int mx, int my, Uint32 flags, int dx, int dy)
 						// drag started in this window
 						return -1;
 					}
-				} 
+				}
 				else if (win->order > id && win->order < next_id)
 				{
 					// try to find the next level
@@ -407,7 +782,7 @@ int drag_windows (int mx, int my, int dx, int dy)
 	int dragable, resizeable;
 	int x, y;
 	window_info *win;
-	
+
 	if (cur_drag_window)
 	{
 		// We are currently dragging inside another window, don't
@@ -436,14 +811,14 @@ int drag_windows (int mx, int my, int dx, int dy)
 						// position relative to window
 						x = mx - win->cur_x;
 						y = my - win->cur_y;
-						
+
 						// first check for being actively dragging or on the top bar
 						if (win->dragged || (dragable && mouse_in_window(i, mx, my) && ((y < 0) || (win->owner_drawn_title_bar && y < win->title_height))) )
 						{
 							drag_id = i;
 							win->dragged = 1;
 							break;
-						} 
+						}
 						// check if we are resizing this window
 						else if (win->resized || (resizeable && mouse_in_window(i, mx, my) && x > win->len_x - win->box_size && y > win->len_y - win->box_size) )
 						{
@@ -451,12 +826,12 @@ int drag_windows (int mx, int my, int dx, int dy)
 							win->resized = 1;
 							break;
 						}
-						// check if we're dragging inside a window 
+						// check if we're dragging inside a window
 						else if(mouse_in_window(i, mx, my))
 						{
 							return -1;
 						}
-					} 
+					}
 					else if (win->order < id && win->order > next_id)
 					{
 						// try to find the next level
@@ -498,20 +873,20 @@ int drag_windows (int mx, int my, int dx, int dy)
 						drag_id = i;
 						win->dragged = 1;
 						break;
-					} 
+					}
 					// check if we are resizing this window
-					else if (resizeable && mouse_in_window(i, mx, my) && x > win->len_x - win->box_size && y > win->len_y - win->box_size) 
+					else if (resizeable && mouse_in_window(i, mx, my) && x > win->len_x - win->box_size && y > win->len_y - win->box_size)
 					{
 						drag_id = i;
 						win->resized = 1;
 						break;
-					} 
-					// check if we're dragging inside a window 
+					}
+					// check if we're dragging inside a window
 					else if (mouse_in_window(i, mx, my))
 					{
 						return -1;
 					}
-				} 
+				}
 				else if (win->order > id && win->order < next_id){
 					// try to find the next level
 					next_id = win->order;
@@ -529,7 +904,7 @@ int drag_windows (int mx, int my, int dx, int dy)
 
 	// dragged window is always on top
 	select_window (drag_id);
-	
+
 	if(left_click>1 && (dx != 0 || dy != 0))	// TODO: avoid globals?
 	{
 		win = &(windows_list.window[drag_id]);
@@ -538,13 +913,13 @@ int drag_windows (int mx, int my, int dx, int dy)
 			move_window (drag_id, win->pos_id, win->pos_loc, win->pos_x+dx, win->pos_y+dy);
 		else
 			// resize this window
-			resize_window (drag_id, win->len_x + dx, win->len_y + dy); 
+			resize_window (drag_id, win->len_x + dx, win->len_y + dy);
 	}
 
 	return drag_id;
 }
 
-int	keypress_in_windows(int x, int y, Uint32 key, Uint32 unikey)
+int	keypress_in_windows(int x, int y, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod)
 {
 	int	done= 0;
 	int	id;
@@ -566,7 +941,7 @@ int	keypress_in_windows(int x, int y, Uint32 key, Uint32 unikey)
 					// at this level?
 					if(windows_list.window[i].order == id)
 					{
-						done = keypress_in_window (i, x, y, key, unikey);
+						done = keypress_in_window (i, x, y, key_code, key_unicode, key_mod);
 						if(done > 0)
 						{
 							if (windows_list.window[i].displayed > 0)
@@ -587,7 +962,7 @@ int	keypress_in_windows(int x, int y, Uint32 key, Uint32 unikey)
 				id= next_id;
 		}
 	}
-	
+
 	// now check the background windows in the proper order
 	id= -9999;
 	while(done <= 0)
@@ -601,13 +976,13 @@ int	keypress_in_windows(int x, int y, Uint32 key, Uint32 unikey)
 				// at this level?
 				if(windows_list.window[i].order == id)
 				{
-					done = keypress_in_window(i, x, y, key, unikey);
+					done = keypress_in_window(i, x, y, key_code, key_unicode, key_mod);
 					if(done > 0)
 					{
 						//select_window(i);	// these never get selected
 						return i;
 					}
-				} 
+				}
 				else if(windows_list.window[i].order > id && windows_list.window[i].order < next_id)
 				{
 					// try to find the next level
@@ -620,7 +995,7 @@ int	keypress_in_windows(int x, int y, Uint32 key, Uint32 unikey)
 		else
 			id= next_id;
 	}
-	
+
 	return -1;	// no keypress in a window
 }
 
@@ -634,7 +1009,7 @@ void	end_drag_windows()
 		windows_list.window[i].resized= 0;
 		windows_list.window[i].drag_in= 0;
 	}
-	
+
 	// also reset the window we were dragging in, and the dragged widget
 	cur_drag_window = NULL;
 	cur_drag_widget = NULL;
@@ -644,12 +1019,12 @@ void	end_drag_windows()
 int	select_window_with (int win_id, int raise_parent, int raise_children)
 {
 	int	i, old;
-	
+
 	if (win_id < 0 || win_id >= windows_list.num_windows)	return -1;
 	if (windows_list.window[win_id].window_id != win_id)	return -1;
 	// never select background windows
 	if (windows_list.window[win_id].order < 0)		return 0;
-	
+
 	// if this is a child window, raise the parent first
 	if (raise_parent && windows_list.window[win_id].pos_id >= 0)
 		select_window_with (windows_list.window[win_id].pos_id, 1, 0);
@@ -661,10 +1036,10 @@ int	select_window_with (int win_id, int raise_parent, int raise_children)
 		if(windows_list.window[i].order > old)
 			windows_list.window[i].order--;
 	}
-	
+
 	// and put it on top
 	windows_list.window[win_id].order = windows_list.num_windows;
-	
+
 	// now raise all children
 	if (raise_children)
 	{
@@ -690,7 +1065,7 @@ int cm_title_handler(window_info *win, int widget_id, int mx, int my, int option
 	switch (option)
 	{
 		case 0: hide_all_windows(); break;
-		case 1: break; // make sure the sound is sucess. 
+		case 1: break; // make sure the sound is sucess.
 	}
 	return 1;
 }
@@ -703,7 +1078,7 @@ int	create_window(const char *name, int pos_id, Uint32 pos_loc, int pos_x, int p
 	int	win_id=-1;
 	int	i;
 	int isold = 1;
-	
+
 	// verify that we are setup and space allocated
 	if (windows_list.window == NULL)
 	{
@@ -756,11 +1131,12 @@ int	create_window(const char *name, int pos_id, Uint32 pos_loc, int pos_x, int p
 			else
 				cm_grey_line(win->cm_id, 1, 1);
 			cm_bool_line(win->cm_id, 2, &windows_on_top, "windows_on_top");
+			cm_bool_line(win->cm_id, 3, get_scale_flag_MW(), "disable_window_scaling_controls");
 		}
 		else
 			win->cm_id = CM_INIT_VALUE;
 		my_strncp(win->window_name, name, sizeof (win->window_name));
-		
+
 		if (pos_id >= 0 && !windows_list.window[pos_id].displayed)
 		{
 			// parent is hidden
@@ -787,6 +1163,12 @@ int	create_window(const char *name, int pos_id, Uint32 pos_loc, int pos_x, int p
 		win->line_color[2] = 0.39f;
 		win->line_color[3] = 0.0f;
 
+		win->custom_scale = NULL;
+		// Imherit font category from parent, default to UI_FONT
+		if (pos_id >= 0 && pos_id < windows_list.num_windows)
+			win->font_category = windows_list.window[pos_id].font_category;
+		else
+			win->font_category = UI_FONT;
 		update_window_scale(win, get_global_scale());
 
 		win->init_handler = NULL;
@@ -804,20 +1186,21 @@ int	create_window(const char *name, int pos_id, Uint32 pos_loc, int pos_x, int p
 		win->after_show_handler = NULL;
 		win->hide_handler = NULL;
 		win->ui_scale_handler = NULL;
-		
+		win->font_change_handler = NULL;
+
 		win->widgetlist = NULL;
-		
+
 		// now call the routine to place it properly
 		init_window (win_id, pos_id, pos_loc, pos_x, pos_y, size_x, size_y);
 
 		win->order = (property_flags & ELW_SHOW_LAST) ? -win_id-1 : win_id+1;
-		// make sure the order is unique if this is not a background 
+		// make sure the order is unique if this is not a background
 		// window
 		if (isold && win->order > 0)
 		{
 			// determine the highest unused order
 			int order = windows_list.num_windows;
-			
+
 			while (1)
 			{
 				for (i = 0; i < windows_list.num_windows; i++)
@@ -830,7 +1213,7 @@ int	create_window(const char *name, int pos_id, Uint32 pos_loc, int pos_x, int p
 				else
 					break;
 			}
-			
+
 			win->order = order;
 			// select the window to the foreground
 			select_window (win_id);
@@ -848,7 +1231,7 @@ void	destroy_window(int win_id)
 	if(win_id < 0 || win_id >= windows_list.num_windows)	return;
 	if(windows_list.window[win_id].window_id != win_id)	return;
 	// mark the window as unused
-	
+
 	win = &(windows_list.window[win_id]);
 
 	if (cm_valid(win->cm_id))
@@ -857,7 +1240,7 @@ void	destroy_window(int win_id)
 		win->cm_id = CM_INIT_VALUE;
 	}
 
-	// call destruction handler        
+	// call destruction handler
 	if (win->destroy_handler != NULL)
 		win->destroy_handler (win);
 
@@ -867,7 +1250,7 @@ void	destroy_window(int win_id)
 	    widget_destroy(win_id, win->widgetlist->id);
 	}
 	win->widgetlist = NULL;
-	
+
 	win->window_id = -1;
 	win->order = -1;
 	win->displayed = 0;
@@ -876,7 +1259,7 @@ void	destroy_window(int win_id)
 int	init_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y, int size_x, int size_y)
 {
 	int pwin_x, pwin_y;
-	
+
 	if(win_id < 0 || win_id >= windows_list.num_windows)	return -1;
 	if(windows_list.window[win_id].window_id != win_id)	return -1;
 	if (pos_id >= 0)
@@ -884,7 +1267,7 @@ int	init_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y, in
 		if (pos_id >= windows_list.num_windows)			return -1;
 		if (windows_list.window[pos_id].window_id != pos_id)	return -1;
 	}
-			
+
 	// parent window position. The new window is placed relative to these
 	// coordinates. If pos_id < 0, the values are taken to be absolute
 	// (i.e. relative to (0, 0) )
@@ -894,7 +1277,7 @@ int	init_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y, in
 	// memorize the size
 	windows_list.window[win_id].len_x= size_x;
 	windows_list.window[win_id].len_y= size_y;
-	// initialize min_len_x and min_len_y to zero. 
+	// initialize min_len_x and min_len_y to zero.
 	windows_list.window[win_id].min_len_x= 0;
 	windows_list.window[win_id].min_len_y= 0;
 	// then place the window
@@ -906,7 +1289,7 @@ int	init_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y, in
 				y = size_y,
 				width = windows_list.window[win_id].box_size,
 				height = size_y;
-		
+
 		if(windows_list.window[win_id].flags&ELW_CLOSE_BOX) {
 			/* Don't put the scrollbar behind the close box. */
 			y += windows_list.window[win_id].box_size;
@@ -941,7 +1324,7 @@ int	move_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y)
 		return -1;
 	if(windows_list.window[win_id].window_id != win_id)
 		return -1;
-	
+
 	win= &windows_list.window[win_id];
 
 	dx = -win->cur_x;
@@ -950,7 +1333,7 @@ int	move_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y)
 	win->pos_id = pos_id;
 	win->pos_loc= pos_loc;	//NOT SUPPORTED YET
 	//TODO: calc win->cur_[xy] based on pos_id & pos_loc
-	if(win->flags&ELW_TITLE_BAR || win->owner_drawn_title_bar){
+	if(win->len_x > 0 && win->len_y > 0 && (win->flags&ELW_TITLE_BAR || win->owner_drawn_title_bar)){
 		int xbound = (win->len_x < 50) ? win->len_x : 50;
 		int ybound = (win->len_y < 50) ? win->len_y : 50;
 		win->pos_x = win->cur_x = clampi(pos_x, xbound - win->len_x, window_width - xbound);
@@ -970,7 +1353,7 @@ int	move_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y)
 			win->pos_y = win->cur_y = (win->flags&ELW_TITLE_BAR)?win->title_height:0;
 		if(win->cur_y >= window_height)
 			win->pos_y = win->cur_y = window_height;	// had -32, but do we want that?
-		if(win->cur_x+win->len_x < win->box_size)
+		if(win->len_x > 0 && (win->cur_x+win->len_x < win->box_size))
 			win->pos_x = win->cur_x = 0-win->len_x+win->box_size;
 		if(win->cur_x > window_width-win->box_size)
 			win->pos_x = win->cur_x = window_width-win->box_size;
@@ -991,7 +1374,7 @@ int	move_window(int win_id, int pos_id, Uint32 pos_loc, int pos_x, int pos_y)
 int	draw_window_title(window_info *win)
 {
 	float u_first_start = (float)31/255;
-	float u_first_end = 0;
+	float u_first_end = 0.5f/255.0f;
 	float v_first_start = (float)160/255;
 	float v_first_end = (float)175/255;
 
@@ -1000,10 +1383,12 @@ int	draw_window_title(window_info *win)
 	float v_middle_start = (float)160/255;
 	float v_middle_end = (float)175/255;
 
-	float u_last_start = 0;
+	float u_last_start = 0.5f/255.0f;
 	float u_last_end = (float)31/255;
 	float v_last_start = (float)160/255;
 	float v_last_end = (float)175/255;
+
+	int bar_end_x_width = (int)(0.5 + win->current_scale * 32);
 
 	if((win->flags&ELW_TITLE_BAR) == ELW_TITLE_NONE)	return 0;
 
@@ -1012,40 +1397,40 @@ int	draw_window_title(window_info *win)
 		mouse_x > win->cur_x && mouse_x < win->cur_x+win->len_x &&
 		mouse_y > win->cur_y-win->title_height && mouse_y < win->cur_y)
 		show_help(cm_title_help_str, 0, win->len_y+10, win->current_scale);
-	
+
 	glColor3f(1.0f,1.0f,1.0f);
-	//ok, now draw that shit...
+	//ok, now draw it...
 
 	bind_texture(icons_text);
 	glEnable(GL_ALPHA_TEST);
 	glAlphaFunc(GL_GREATER,0.03f);
 	glBegin(GL_QUADS);
 
-	if (win->len_x > 64) 
+	if (win->len_x > 2 * bar_end_x_width)
 	{
 		glTexCoord2f(u_first_end, v_first_start);
 		glVertex3i(0, -win->title_height, 0);
 		glTexCoord2f(u_first_end, v_first_end);
 		glVertex3i(0, 0, 0);
 		glTexCoord2f(u_first_start, v_first_end);
-		glVertex3i(32, 0, 0);
+		glVertex3i(bar_end_x_width, 0, 0);
 		glTexCoord2f(u_first_start, v_first_start);
-		glVertex3i(32, -win->title_height, 0);
+		glVertex3i(bar_end_x_width, -win->title_height, 0);
 
 		// draw one streched out cell to the proper size
 		glTexCoord2f(u_middle_end, v_middle_start);
-		glVertex3i(32, -win->title_height, 0);
+		glVertex3i(bar_end_x_width, -win->title_height, 0);
 		glTexCoord2f(u_middle_end, v_middle_end);
-		glVertex3i(32, 0, 0);
+		glVertex3i(bar_end_x_width, 0, 0);
 		glTexCoord2f(u_middle_start, v_middle_end);
-		glVertex3i(win->len_x-32, 0, 0);
+		glVertex3i(win->len_x-bar_end_x_width, 0, 0);
 		glTexCoord2f(u_middle_start, v_middle_start);
-		glVertex3i(win->len_x-32, -win->title_height, 0);
+		glVertex3i(win->len_x-bar_end_x_width, -win->title_height, 0);
 
 		glTexCoord2f(u_last_end, v_last_start);
-		glVertex3i(win->len_x-32, -win->title_height, 0);
+		glVertex3i(win->len_x-bar_end_x_width, -win->title_height, 0);
 		glTexCoord2f(u_last_end, v_last_end);
-		glVertex3i(win->len_x-32, 0, 0);
+		glVertex3i(win->len_x-bar_end_x_width, 0, 0);
 		glTexCoord2f(u_last_start, v_last_end);
 		glVertex3i(win->len_x, 0, 0);
 		glTexCoord2f(u_last_start, v_last_start);
@@ -1087,8 +1472,10 @@ int	draw_window_title(window_info *win)
 	// draw the name of the window
 	if(win->flags&ELW_TITLE_NAME)
 		{
-			int	len=(win->current_scale*get_string_width((unsigned char*)win->window_name)*8)/12;
-			int	x_pos=(win->len_x-len)/2;
+			int	len = get_string_width_zoom((unsigned char*)win->window_name,
+				UI_FONT, win->current_scale_small);
+			int	x_pos = (win->len_x-len)/2;
+			int y_txt = 1 - win->title_height + (win->title_height - win->small_font_len_y)/2;
 
 			glColor4f(0.0f,0.0f,0.0f,1.0f);
 			glBegin(GL_QUADS);
@@ -1110,7 +1497,8 @@ int	draw_window_title(window_info *win)
 			glEnable(GL_TEXTURE_2D);
 			glColor3f(win->border_color[0],win->border_color[1],win->border_color[2]);
 			// center text
-			draw_string_small_zoomed((win->len_x-len)/2, 1-win->title_height, (unsigned char*)win->window_name, 1, win->current_scale);
+			draw_string_small_zoomed(x_pos, y_txt, (const unsigned char*)win->window_name,
+				1, win->current_scale);
 		}
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
@@ -1146,7 +1534,7 @@ int	draw_window_border(window_info *win)
 		{
 			draw_window_alphaborder (win);
 		}
-		else 
+		else
 		{
 			glColor3f(win->border_color[0],win->border_color[1],win->border_color[2]);
 			glBegin(GL_LINE_LOOP);
@@ -1176,7 +1564,7 @@ int	draw_window_border(window_info *win)
 			glVertex3i(win->len_x, win->len_y-win->box_size, 0);
 		glEnd();
 	}
-	
+
 	if(win->flags&ELW_CLOSE_BOX)
 	{
 		//draw the corner, with the X in
@@ -1186,20 +1574,9 @@ int	draw_window_border(window_info *win)
 			glVertex3i(win->len_x-win->box_size, win->box_size, 0);
 			glVertex3i(win->len_x-win->box_size, 0, 0);
 		glEnd();
-
-		glLineWidth(2.0f);
-
-		glBegin(GL_LINES);
-			glVertex2i(win->len_x-win->box_size+3, 3);
-			glVertex2i(win->len_x-3, win->box_size-3);
-		
-			glVertex2i(win->len_x-3, 3);
-			glVertex2i(win->len_x-win->box_size+3, win->box_size-3);
-		glEnd();
-
-		glLineWidth(1.0f);
+		draw_cross(win->len_x - win->box_size / 2, win->box_size / 2, win->box_size / 2 - win->box_size / 6, 1);
 	}
-	
+
 	glEnable(GL_TEXTURE_2D);
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
@@ -1212,7 +1589,7 @@ int	draw_window(window_info *win)
 {
 	int	ret_val=0;
 	widget_list *W = NULL;
-	
+
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
 #endif //OPENGL_TRACE
@@ -1261,7 +1638,7 @@ CHECK_GL_ERRORS();
 		widget_move(win->window_id, win->scroll_id, win->len_x - widget_get_width(win->window_id, win->scroll_id), pos+offset);
 		/* Cut away what we've scrolled past, */
 		glEnable(GL_SCISSOR_TEST);
-		glScissor(win->cur_x+gx_adjust, window_height-win->cur_y-win->len_y-gy_adjust, win->len_x+1, win->len_y+1);
+		glScissor(win->cur_x, window_height - win->cur_y - win->len_y, win->len_x + 1, win->len_y + 1);
 		glTranslatef(0, -pos, 0);
 	}
 	if(win->display_handler)
@@ -1278,7 +1655,7 @@ CHECK_GL_ERRORS();
 	}
 	// assign here in case display_handler changed the widgets - like deletes the widgets
 	W = win->widgetlist;
-	
+
 	// widget drawing
 	while(W != NULL)
 	{
@@ -1315,13 +1692,13 @@ void show_window(int win_id)
 	int iwin;
 	int ipos;
 	window_info *win;
-	
+
 	if(win_id < 0 || win_id >= windows_list.num_windows)	return;
 	if(windows_list.window[win_id].window_id != win_id)	return;
 
 	win = &windows_list.window[win_id];
 	if (win->show_handler) (*win->show_handler)(win);
-	
+
 	// pull to the top if not currently displayed
 	if(!windows_list.window[win_id].displayed)
 		select_window(win_id);
@@ -1337,12 +1714,12 @@ void show_window(int win_id)
 		// display it
 		windows_list.window[win_id].displayed = 1;
 	}
-	
+
 	// see if child windows need to be reinstated
 	for (iwin = 0; iwin < windows_list.num_windows; iwin++)
 		if (windows_list.window[iwin].pos_id == win_id && windows_list.window[iwin].reinstate)
 			show_window (iwin);
-	
+
 	if (win->after_show_handler) (*win->after_show_handler)(win);
 }
 
@@ -1350,15 +1727,15 @@ void	hide_window(int win_id)
 {
 	int iwin;
 	window_info * win;
-	
+
 	if(win_id < 0 || win_id >= windows_list.num_windows)	return;
 	if(windows_list.window[win_id].window_id != win_id)	return;
-	
+
 	win = &windows_list.window[win_id];
-	
+
 	win->displayed = 0;
 	win->reinstate = 0;
-	
+
 	// hide child windows
 	for (iwin = 0; iwin < windows_list.num_windows; iwin++)
 		if (windows_list.window[iwin].pos_id == win_id && windows_list.window[iwin].displayed)
@@ -1401,21 +1778,21 @@ static void resize_scrollbar(window_info *win)
 void resize_window (int win_id, int new_width, int new_height)
 {
 	window_info *win;
-		
+
 	if (win_id < 0 || win_id >= windows_list.num_windows)	return;
 	if (windows_list.window[win_id].window_id != win_id)	return;
-	
+
 	win = &(windows_list.window[win_id]);
 
 	if (new_width < win->min_len_x) new_width = win->min_len_x;
 	if (new_height < win->min_len_y) new_height = win->min_len_y;
-	
+
 	win->len_x = new_width;
 	win->len_y = new_height;
-	
+
 	if (win->flags&ELW_SCROLLABLE)
 		resize_scrollbar(win);
-	
+
 	if (win->resize_handler != NULL)
 	{
 		glPushMatrix ();
@@ -1499,30 +1876,26 @@ int	click_in_window(int win_id, int x, int y, Uint32 flags)
 		//check the X for close - but hide it
 		if(win->flags&ELW_CLOSE_BOX)
 		{
-        		if(my>0 && my<=win->box_size && mx>(win->len_x-win->box_size) && mx<=win->len_x)
+			if(my>0 && my<=win->box_size && mx>(win->len_x-win->box_size) && mx<=win->len_x)
 			{
 				// the X was hit, hide this window
 				// but don't close storage if trade is open
-				if(win_id != storage_win || trade_win < 0 || !windows_list.window[trade_win].displayed){
+				if(win_id != managed_windows.list[MW_STORAGE].id || managed_windows.list[MW_TRADE].id < 0 || !windows_list.window[managed_windows.list[MW_TRADE].id].displayed)
 					hide_window(win_id);
-#ifndef	OLD_CLOSE_BAG
-					if(win_id == ground_items_win){	// are we closing the ground item/bag window?
-						// we need to tell the server we closed the bag
-						unsigned char protocol_name;
-  	 
-  	                    protocol_name= S_CLOSE_BAG;
-  	                    my_tcp_send(my_socket,&protocol_name,1);
-					}
-#endif	//OLD_CLOSE_BAG
-				}
 				if (win->close_handler != NULL)
 					win->close_handler (win);
 				do_window_close_sound();
 				return 1;
-			}				
+			}
 		}
 		if(win->flags&ELW_RESIZEABLE && mx > win->len_x-win->box_size && my > win->len_y-win->box_size) {
 			/* Clicked on the resize-corner. */
+			return 1;
+		}
+		if ((win->custom_scale != NULL) && (!managed_windows.disable_mouse_or_keys_scaling) &&
+			(flags & KMOD_CTRL) && ((flags & ELW_WHEEL_DOWN) || (flags & ELW_WHEEL_UP)))
+		{
+			step_win_scale_factor((flags & ELW_WHEEL_UP) ? 1 : 0, win->custom_scale);
 			return 1;
 		}
 		if(win->flags&ELW_SCROLLABLE) {
@@ -1557,7 +1930,7 @@ int	click_in_window(int win_id, int x, int y, Uint32 flags)
 			ret_val = (*win->click_handler)(win, mx, my - scroll_pos, flags);
 			glPopMatrix();
 		}
-		
+
 		if(!ret_val && win->flags&ELW_SCROLLABLE && flags &(ELW_WHEEL_UP|ELW_WHEEL_DOWN)) {
 			/* Scroll, pass to our scroll widget */
 			if(flags&ELW_WHEEL_UP) {
@@ -1610,7 +1983,7 @@ int	drag_in_window(int win_id, int x, int y, Uint32 flags, int dx, int dy)
 		if (W && !(W->Flags & WIDGET_DISABLED))
 		{
 			int ret_val;
-			
+
 			glPushMatrix ();
 			glTranslatef ((float)win->cur_x, (float)win->cur_y-scroll_pos, 0.0f);
 			ret_val = widget_handle_drag (W, mx - W->pos_x, my - W->pos_y, flags, dx, dy);
@@ -1655,7 +2028,7 @@ int	drag_in_window(int win_id, int x, int y, Uint32 flags, int dx, int dy)
 			glTranslatef((float)win->cur_x, (float)win->cur_y-scroll_pos, 0.0f);
 			glPopMatrix();
 		}
-		return	1;	// drag has been processed	
+		return	1;	// drag has been processed
 	}
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
@@ -1676,7 +2049,7 @@ int	mouseover_window (int win_id, int x, int y)
 	if(windows_list.window[win_id].window_id != win_id)	return -1;
 	win = &windows_list.window[win_id];
 	W = win->widgetlist;
-	
+
 	if (mouse_in_window (win_id, x, y) > 0)
 	{
 		mx = x - win->cur_x;
@@ -1697,7 +2070,7 @@ int	mouseover_window (int win_id, int x, int y)
 			if (mx > W->pos_x && mx <= W->pos_x + W->len_x && my > W->pos_y && my <= W->pos_y+W->len_y)
 			{
 				if (!(W->Flags&WIDGET_DISABLED)) {
-					// don't return on mouseover. hopefully it 
+					// don't return on mouseover. hopefully it
 					// won't destroy our window...
 					widget_handle_mouseover (W, mx, my);
 				}
@@ -1714,7 +2087,7 @@ int	mouseover_window (int win_id, int x, int y)
 			ret_val = (*win->mouseover_handler)(win, mx, my);
 			glPopMatrix();
 
-		} 
+		}
 #ifdef	ELC
 		if (!ret_val)
 			elwin_mouse = CURSOR_ARROW;
@@ -1729,7 +2102,7 @@ CHECK_GL_ERRORS();
 	return 0;
 }
 
-int	keypress_in_window(int win_id, int x, int y, Uint32 key, Uint32 unikey)
+int	keypress_in_window(int win_id, int x, int y, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod)
 {
 	window_info *win;
 	int	mx, my;
@@ -1745,6 +2118,23 @@ int	keypress_in_window(int win_id, int x, int y, Uint32 key, Uint32 unikey)
 
 	if (mouse_in_window (win_id, x, y) > 0)
 	{
+		if ((win->custom_scale != NULL) && (!managed_windows.disable_mouse_or_keys_scaling))
+		{
+			int actioned = 1;
+			if (KEY_DEF_CMP(K_WINSCALEUP, key_code, key_mod))
+				step_win_scale_factor(1, win->custom_scale);
+			else if (KEY_DEF_CMP(K_WINSCALEDOWN, key_code, key_mod))
+				step_win_scale_factor(0, win->custom_scale);
+			else if (KEY_DEF_CMP(K_WINSCALEDEF, key_code, key_mod))
+				reset_win_scale_factor(1, win->custom_scale);
+			else if (KEY_DEF_CMP(K_WINSCALEINIT, key_code, key_mod))
+				reset_win_scale_factor(0, win->custom_scale);
+			else
+				actioned = 0;
+			if (actioned)
+				return 1;
+		}
+
 		mx = x - win->cur_x;
 		my = y - win->cur_y;
 
@@ -1763,9 +2153,9 @@ int	keypress_in_window(int win_id, int x, int y, Uint32 key, Uint32 unikey)
 			if (mx > W->pos_x && mx <= W->pos_x + W->len_x && my > W->pos_y && my <= W->pos_y+W->len_y)
 			{
 				if (!(W->Flags&WIDGET_DISABLED)) {
-					if ( widget_handle_keypress (W, mx - W->pos_x, my - W->pos_y, key, unikey) )
+					if ( widget_handle_keypress (W, mx - W->pos_x, my - W->pos_y, key_code, key_unicode, key_mod) )
 					{
-						// widget handled it 
+						// widget handled it
 						glPopMatrix ();
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
@@ -1782,17 +2172,17 @@ CHECK_GL_ERRORS();
 		if(win->keypress_handler != NULL)
 		{
 			int ret_val;
-			
+
 			glPushMatrix();
 			glTranslatef((float)win->cur_x, (float)win->cur_y, 0.0f);
-			ret_val = (*win->keypress_handler) (win, mx, my, key, unikey);
+			ret_val = (*win->keypress_handler) (win, mx, my, key_code, key_unicode, key_mod);
 			glPopMatrix();
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
 #endif //OPENGL_TRACE
 
 			return ret_val; // keypresses are fall-through
-		} 
+		}
 	}
 #ifdef OPENGL_TRACE
 CHECK_GL_ERRORS();
@@ -1870,6 +2260,10 @@ void	*set_window_handler(int win_id, int handler_id, int (*handler)() )
 			old_handler= (void *)windows_list.window[win_id].ui_scale_handler;
 			windows_list.window[win_id].ui_scale_handler=handler;
 			break;
+		case	ELW_HANDLER_FONT_CHANGE:
+			old_handler= (void *)windows_list.window[win_id].font_change_handler;
+			windows_list.window[win_id].font_change_handler=handler;
+			break;
 		default:
 			old_handler=NULL;
 	}
@@ -1942,7 +2336,7 @@ int set_window_min_size (int win_id, int width, int height)
 
 	windows_list.window[win_id].min_len_x = width;
 	windows_list.window[win_id].min_len_y = height;
-	
+
 	return 1;
 }
 
@@ -1950,9 +2344,9 @@ int set_window_flag (int win_id, Uint32 flag)
 {
 	if (win_id < 0 || win_id >= windows_list.num_windows)	return 0;
 	if (windows_list.window[win_id].window_id != win_id)	return 0;
-	
+
 	windows_list.window[win_id].flags |= flag;
-	return windows_list.window[win_id].flags; 
+	return windows_list.window[win_id].flags;
 }
 
 void set_window_scroll_len(int win_id, int bar_len)
@@ -1989,4 +2383,28 @@ int get_window_scroll_pos(int win_id)
 		return vscrollbar_get_pos(win_id, windows_list.window[win_id].scroll_id);
 	else
 		return 0;
+}
+
+int set_window_font_category(int win_id, font_cat cat)
+{
+	if (win_id < 0 || win_id >= windows_list.num_windows) return 0;
+	if (windows_list.window[win_id].window_id != win_id) return 0;
+
+	windows_list.window[win_id].font_category = cat;
+	change_window_font(&windows_list.window[win_id], cat);
+	return 1;
+}
+
+int get_window_content_width(int window_id)
+{
+	const window_info *win;
+
+	if (window_id < 0 || window_id >= windows_list.num_windows) return 0;
+	win = &windows_list.window[window_id];
+	if (win->window_id != window_id) return 0;
+
+	if (win->scroll_id < 0)
+		return win->len_x;
+	else
+		return win->len_x - widget_get_width(window_id, win->scroll_id);
 }

@@ -30,6 +30,7 @@
 
 #include "asc.h"
 #include "context_menu.h"
+#include "cursors.h"
 #include "elconfig.h"
 #include "errors.h"
 #include "font.h"
@@ -38,9 +39,11 @@
 #include "hud.h"
 #include "init.h"
 #include "io/elpathwrapper.h"
+#include "io/elfilewrapper.h"
 #include "items.h"
 #include "item_info.h"
 #include "item_lists.h"
+#include "loginwin.h"
 #include "questlog.h"
 #include "sound.h"
 #include "storage.h"
@@ -49,13 +52,16 @@
 
 namespace ItemLists
 {
+	using namespace eternal_lands;
+
 	static void quantity_input_handler(const char *input_text, void *);
 	static int display_itemlist_handler(window_info *win);
 	static int ui_scale_itemlist_handler(window_info *win);
+	static int change_itemlist_font_handler(window_info *win, font_cat cat);
 	static int click_itemlist_handler(window_info *win, int mx, int my, Uint32 flags);
 	static int mouseover_itemlist_handler(window_info *win, int mx, int my);
 	static int hide_itemlist_handler(window_info *win);
-	static int keypress_itemlist_handler(window_info *win, int mx, int my, Uint32 key, Uint32 unikey);
+	static int keypress_itemlist_handler(window_info *win, int mx, int my, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod);
 	static int resize_itemlist_handler(window_info *win, int new_width, int new_height);
 	static void new_list_handler(const char *input_text, void *data);
 	static void rename_list_handler(const char *input_text, void *data);
@@ -108,7 +114,7 @@ namespace ItemLists
 	class List_Container
 	{
 		public:
-			List_Container(void) : active_list(0), initial_active_list(0), last_mod_time(0), loaded(false) {}
+			List_Container(void) : active_list(0), initial_active_list(0), last_mod_time(0), loaded(false), using_named_lists(false) {}
 			void load(void);
 			void save(void);
 			bool add(const char *name);
@@ -138,14 +144,18 @@ namespace ItemLists
 			void sort_list(void)
 				{ std::sort( saved_item_lists.begin(), saved_item_lists.end(), List_Container::sort_compare); };
 			void check_and_timed_save(bool force);
+			bool is_using_named_lists(void) const { return using_named_lists; }
+			void switch_to_named_lists(void) { using_named_lists = true; set_named_list_file_name(); }
 		private:
+			void set_named_list_file_name(void) { lists_file_name = "item_lists_" + std::string(get_lowercase_username()) +  ".txt"; }
 			std::vector<List> saved_item_lists;
 			static int FILE_REVISION;
 			size_t active_list;
 			size_t initial_active_list;
 			Uint32 last_mod_time;
 			bool loaded;
-			static const char * filename;
+			std::string lists_file_name;
+			bool using_named_lists;
 			static bool sort_compare(const List &a, const List &b);
 	};
 
@@ -217,6 +227,7 @@ namespace ItemLists
 			void update_min_window_size(window_info *win);
 			void set_num_grid_rows(window_info *win, int num);
 			int ui_scale_handler(window_info *win);
+			int font_change_handler(window_info *win, eternal_lands::FontManager::Category cat);
 			int draw(window_info *win);
 			void new_or_rename_list(bool is_new);
 			int mouseover(window_info *win, int mx, int my);
@@ -227,7 +238,7 @@ namespace ItemLists
 			void reset_position(void);
 			void make_active_visable(void);
 			void cm_names_pre_show(void);
-			int keypress(char the_key);
+			int keypress(SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod);
 			void resized_name_panel(window_info *win);
 			void reset_pickup_fail_time(void) { pickup_fail_time = SDL_GetTicks(); }
 		private:
@@ -645,7 +656,6 @@ namespace ItemLists
 
 
 	int List_Container::FILE_REVISION = 2;
-	const char * List_Container::filename = "item_lists.txt";
 
 	//  Save the item lists to a file in players config directory
 	//
@@ -653,7 +663,7 @@ namespace ItemLists
 	{
 		if (!loaded || saved_item_lists.empty())
 			return;
-		std::string fullpath = get_path_config() + std::string(filename);
+		std::string fullpath = get_path_config() + lists_file_name;
 		std::ofstream out(fullpath.c_str());
 		if (!out)
 		{
@@ -678,7 +688,15 @@ namespace ItemLists
 	{
 		loaded = true;
 		saved_item_lists.clear();
-		std::string fullpath = get_path_config() + std::string(filename);
+		set_named_list_file_name();
+		if (el_file_exists_config(lists_file_name.c_str()))
+			using_named_lists = true;
+		else
+		{
+			lists_file_name = "item_lists.txt";
+			using_named_lists = false;
+		}
+		std::string fullpath = get_path_config() + lists_file_name;
 		std::ifstream in(fullpath.c_str());
 		if (!in)
 			return;
@@ -855,8 +873,8 @@ namespace ItemLists
 		names_list_height = win->small_font_len_y;
 		grid_pixel_size = static_cast<int>(0.5 + 33 * win->current_scale);
 		ui_control_space = win->box_size;
-		add_button_x = static_cast<int>(get_size_x() - win->default_font_len_x * 2);
-		add_button_y = get_grid_size();
+		add_button_x = get_size_x() - ui_control_space/2;
+		add_button_y = 3 * get_grid_size() / 2;
 		update_min_window_size(win);
 		if (win->len_y <= 0)
 			calc_num_show_names(win);
@@ -870,6 +888,14 @@ namespace ItemLists
 		return 1;
 	}
 
+	// Called when font setting are changed
+	int List_Window::font_change_handler(window_info *win, eternal_lands::FontManager::Category cat)
+	{
+		if (cat != win->font_category)
+			return 0;
+		ui_scale_handler(win);
+		return 1;
+	}
 
 	//	Set the minumum window size
 	//
@@ -892,6 +918,7 @@ namespace ItemLists
 			filter[0] = '\0';
 
 			win_id = create_window(item_list_preview_title, win->window_id, 0, get_window_pos_x(win), 0, 0, 0, ELW_USE_UISCALE|ELW_WIN_DEFAULT|ELW_RESIZEABLE);
+			set_window_custom_scale(win_id, MW_ITEMS);
 			set_window_handler(win_id, ELW_HANDLER_DISPLAY, (int (*)())&display_itemlist_handler );
 			set_window_handler(win_id, ELW_HANDLER_CLICK, (int (*)())&click_itemlist_handler );
 			set_window_handler(win_id, ELW_HANDLER_MOUSEOVER, (int (*)())&mouseover_itemlist_handler );
@@ -899,13 +926,15 @@ namespace ItemLists
 			set_window_handler(win_id, ELW_HANDLER_KEYPRESS, (int (*)())&keypress_itemlist_handler );
 			set_window_handler(win_id, ELW_HANDLER_RESIZE, (int (*)())&resize_itemlist_handler );
 			set_window_handler(win_id, ELW_HANDLER_UI_SCALE, (int (*)())&ui_scale_itemlist_handler );
+			set_window_handler(win_id, ELW_HANDLER_FONT_CHANGE, (int (*)())&change_itemlist_font_handler);
 
 			cm_selected_item_menu = cm_create(cm_item_list_selected_str, cm_selected_item_handler);
 			cm_names_menu = cm_create(cm_item_list_names_str, cm_names_handler);
+			cm_bool_line(cm_names_menu, 5, &items_list_disable_find_list, 0);
 			cm_set_pre_show_handler(cm_names_menu, cm_names_pre_show_handler);
 
 			names_scroll_id = vscrollbar_add_extended(win_id, 1, NULL, 0, 0, 0, 0, 0,
-				1.0, 0.77f, 0.57f, 0.39f, 0, 1, Vars::lists()->size()-num_show_names_list);
+				1.0, 0, 1, Vars::lists()->size()-num_show_names_list);
 
 			init_ipu(&ipu_item_list_name, -1, 1, 1, 1, NULL, NULL);
 		}
@@ -1020,6 +1049,28 @@ namespace ItemLists
 			rendergrid(1, 1, x_start-1, y_start-1, get_grid_size()+2, get_grid_size()+2);
 		}
 
+		// Drawn the new list button (+) with highlight when mouse over
+		if (mouse_over_add_button)
+			glColor3f(0.99f,0.77f,0.55f);
+		else
+			glColor3f(0.77f,0.57f,0.39f);
+
+		int half_plus_width = 3*win->current_scale / 2;
+		int half_plus_length = ui_control_space/3;
+		glBegin(GL_QUADS);
+
+		glVertex3i(add_button_x - half_plus_length, add_button_y - half_plus_width, 0);
+		glVertex3i(add_button_x + half_plus_length, add_button_y - half_plus_width, 0);
+		glVertex3i(add_button_x + half_plus_length, add_button_y + half_plus_width, 0);
+		glVertex3i(add_button_x - half_plus_length, add_button_y + half_plus_width, 0);
+
+		glVertex3i(add_button_x - half_plus_width, add_button_y - half_plus_length, 0);
+		glVertex3i(add_button_x + half_plus_width, add_button_y - half_plus_length, 0);
+		glVertex3i(add_button_x + half_plus_width, add_button_y + half_plus_length, 0);
+		glVertex3i(add_button_x - half_plus_width, add_button_y + half_plus_length, 0);
+
+		glEnd();
+
 		glEnable(GL_TEXTURE_2D);
 
 		// draw the quantities over everything else so they always show
@@ -1029,23 +1080,20 @@ namespace ItemLists
 			char str[80];
 			for(size_t i=0; i<Vars::lists()->get_list().get_num_items() && i<static_cast<size_t>(num_grid_cols()*num_grid_rows); i++)
 			{
-				int x_start, y_start;
-				x_start = get_grid_size() * (i%num_grid_cols()) + 1;
-				y_start = get_grid_size() * (i/num_grid_cols()) + ((i&1) ?1 :(get_grid_size() - win->small_font_len_y));
-				safe_snprintf(str, sizeof(str), "%i", Vars::lists()->get_list().get_quantity(i));
-				if ((mouse_over_item == i) && enlarge_text())
-					draw_string_shadowed_zoomed(x_start, y_start, (unsigned char*)str, 1,1.0f,1.0f,1.0f, 0.0f, 0.0f, 0.0f, win->current_scale);
-				else
-					draw_string_small_shadowed_zoomed(x_start, y_start, (unsigned char*)str, 1,1.0f,1.0f,1.0f, 0.0f, 0.0f, 0.0f, win->current_scale);
-				}
-		}
+				int x_start = get_grid_size() * (i%num_grid_cols()) + 1;
+				int y_start = get_grid_size() * (i/num_grid_cols()) + ((i&1) ? 1 : get_grid_size());
+				float zoom = (mouse_over_item == i && enlarge_text())
+					? win->current_scale : win->current_scale_small;
 
-		// Drawn the new list button (+) with highlight when mouse over
-		if (mouse_over_add_button)
-			glColor3f(0.99f,0.77f,0.55f);
-		else
-			glColor3f(0.77f,0.57f,0.39f);
-		draw_string_zoomed(add_button_x, add_button_y, (unsigned const char*)"+", 1, win->current_scale * 2.0);
+				safe_snprintf(str, sizeof(str), "%i", Vars::lists()->get_list().get_quantity(i));
+				TextDrawOptions options = TextDrawOptions().set_shadow().set_foreground(1.0f, 1.0f, 1.0f)
+					.set_background(0.0f, 0.0f, 0.0f).set_zoom(zoom)
+					.set_vertical_alignment((i&1) ? TOP_LINE : BOTTOM_LINE);
+				FontManager::get_instance().draw(win->font_category,
+					reinterpret_cast<const unsigned char*>(str), strlen(str), x_start, y_start,
+					options);
+			}
+		}
 
 		// draw the item list names
 		glColor3f(1.0f,1.0f,1.0f);
@@ -1055,7 +1103,7 @@ namespace ItemLists
 		const std::vector<List> lists = Vars::lists()->get_lists();
 		const int hl_width = static_cast<int>(win->len_x-win->box_size-3);
 		const int hl_height = static_cast<int>(names_list_height + get_list_gap());
-		const size_t disp_chars = static_cast<size_t>((win->len_x-win->box_size-2*get_list_gap()) / win->small_font_len_x);
+		int max_name_width = win->len_x - win->box_size - 2*get_list_gap();
 		for (size_t i = top_entry; i<lists.size() && num_shown<num_show_names_list; ++i)
 		{
 			if (i==Vars::lists()->get_active())
@@ -1063,15 +1111,19 @@ namespace ItemLists
 			else if (i==name_under_mouse)
 				draw_highlight(1, static_cast<int>(pos_y-get_list_gap()/2), hl_width, hl_height, 0);
 			glColor3f(1.0f,1.0f,1.0f);
-			if (lists[i].get_name().size() > disp_chars)
+
+			const unsigned char* name = reinterpret_cast<const unsigned char*>(lists[i].get_name().c_str());
+			int name_width = get_string_width_zoom(name, win->font_category,
+				win->current_scale_small);
+			draw_string_zoomed_width_font(get_list_gap(), pos_y, name, max_name_width, 1,
+				win->font_category, win->current_scale_small);
+			if (name_width > max_name_width && i == name_under_mouse)
 			{
-				std::string todisp = lists[i].get_name().substr(0,disp_chars);
-				draw_string_small_zoomed(get_list_gap(), pos_y, reinterpret_cast<const unsigned char*>(todisp.c_str()), 1, win->current_scale);
-				if (i==name_under_mouse)
-					show_help(lists[i].get_name().c_str(), 0, static_cast<int>(0.5 + win->len_y + 10 + win->small_font_len_y * help_lines_shown), win->current_scale);
+				show_help(reinterpret_cast<const char*>(name),
+					0, win->len_y + 10 + win->small_font_len_y * help_lines_shown,
+					win->current_scale);
 			}
-			else
-				draw_string_small_zoomed(get_list_gap(), pos_y, reinterpret_cast<const unsigned char*>(lists[i].get_name().c_str()), 1, win->current_scale);
+
 			pos_y += static_cast<int>(names_list_height + get_list_gap());
 			num_shown++;
 		}
@@ -1116,6 +1168,8 @@ CHECK_GL_ERRORS();
 	//
 	int List_Window::mouseover(window_info *win, int mx, int my)
 	{
+		int ret_value = 0;
+
 		if ((my < 0) || (cm_window_shown()!=CM_INIT_VALUE))
 			return 0;
 
@@ -1132,6 +1186,8 @@ CHECK_GL_ERRORS();
 				help_str.push_back(item_list_pickup_help_str);
 				help_str.push_back(item_list_use_help_str);
 				help_str.push_back(item_list_edit_help_str);
+				elwin_mouse = CURSOR_PICK;
+				ret_value = 1;
 			}
 			if ((storage_item_dragged != -1) || (item_dragged != -1))
 				help_str.push_back(item_list_add_help_str);
@@ -1140,7 +1196,8 @@ CHECK_GL_ERRORS();
 		}
 
 		// check if over the add list button
-		if (my>add_button_y && my<(add_button_y+2*win->default_font_len_y) && mx>add_button_x && mx<win->len_x)
+		if (my > add_button_y-get_grid_size()/2 && my < add_button_y + get_grid_size()/2
+			&& mx>win->len_x - ui_control_space && mx < win->len_x)
 		{
 			help_str.push_back(item_list_create_help_str);
 			mouse_over_add_button = true;
@@ -1157,10 +1214,10 @@ CHECK_GL_ERRORS();
 		{
 			help_str.push_back(cm_help_options_str);
 			if (!strlen(filter))
-				help_str.push_back(item_list_find_help_str);
+				help_str.push_back((items_list_disable_find_list) ?item_list_find_help_disabled_str :item_list_find_help_str);
 		}
 
-		return 0;
+		return ret_value;
 	}
 
 
@@ -1201,7 +1258,7 @@ CHECK_GL_ERRORS();
 		size_t over_item_number = Vars::win()->get_item_number(mx, my);
 
 		// If dragging item and ctrl+left-click on window, add item to list
-		if ((flags & ELW_LEFT_MOUSE) && (flags & ELW_CTRL) && was_dragging)
+		if ((flags & ELW_LEFT_MOUSE) && (flags & KMOD_CTRL) && was_dragging)
 		{
 			if (storage_item_dragged != -1)
 				Vars::lists()->add_item(over_item_number, storage_items[storage_item_dragged].image_id, storage_items[storage_item_dragged].id, item_quantity);
@@ -1211,7 +1268,7 @@ CHECK_GL_ERRORS();
 		}
 
 		// ctrl+right-click on a selected item opens the edit menu
-		if ((flags & ELW_RIGHT_MOUSE) && (flags & ELW_CTRL) && (over_item_number<num_items))
+		if ((flags & ELW_RIGHT_MOUSE) && (flags & KMOD_CTRL) && (over_item_number<num_items))
 		{
 			cm_show_direct(Vars::win()->get_grid_cm(), win->window_id, -1);
 			storage_item_dragged = item_dragged = -1;
@@ -1362,16 +1419,16 @@ CHECK_GL_ERRORS();
 
 	//	Key presses in the window used for a search string
 	//
-	int List_Window::keypress(char the_key)
+	int List_Window::keypress(SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod)
 	{
 		last_key_time = SDL_GetTicks();
-		if (the_key == SDLK_ESCAPE)
+		if (key_code == SDLK_ESCAPE)
 		{
 			filter[0] = '\0';
 			last_key_time = 0;
 			return 1;
 		}
-		if (string_input(filter, sizeof(filter), the_key) || (the_key == SDLK_RETURN))
+		if (string_input(filter, sizeof(filter), key_code, key_unicode, key_mod) || (key_code == SDLK_RETURN) || (key_code == SDLK_KP_ENTER))
 		{
 			if (strlen(filter))
 			{
@@ -1391,6 +1448,7 @@ CHECK_GL_ERRORS();
 		int no_active = (Vars::lists()->valid_active_list()) ?0 :1;
 		cm_grey_line(cm_names_menu, 1, no_active);
 		cm_grey_line(cm_names_menu, 3, no_active);
+		cm_grey_line(cm_names_menu, 9, (Vars::lists()->is_using_named_lists()) ?1 :0);
 	}
 
 
@@ -1422,10 +1480,13 @@ CHECK_GL_ERRORS();
 					ItemLists::Vars::win()->update_scroll_len();
 				}
 				break;
-			case 5:
+			case 7:
 				Vars::lists()->load();
 				ItemLists::Vars::win()->update_scroll_len();
 				ItemLists::Vars::win()->make_active_visable();
+				break;
+			case 9:
+				Vars::lists()->switch_to_named_lists();
 				break;
 			default:
 				return 0;
@@ -1504,6 +1565,13 @@ CHECK_GL_ERRORS();
 		return Vars::win()->ui_scale_handler(win);
 	}
 
+	//  Called when the font settings are changed
+	//
+	static int change_itemlist_font_handler(window_info *win, font_cat cat)
+	{
+		return Vars::win()->font_change_handler(win, cat);
+	}
+
 
 	//	Handle mouse clicks in the window
 	//
@@ -1530,12 +1598,12 @@ CHECK_GL_ERRORS();
 		return 1;
 	}
 
-	static int keypress_itemlist_handler(window_info *win, int mx, int my, Uint32 key, Uint32 unikey)
+	static int keypress_itemlist_handler(window_info *win, int mx, int my, SDL_Keycode key_code, Uint32 key_unicode, Uint16 key_mod)
 	{
-		char keychar = tolower(key_to_char(unikey));
-		if ((keychar == '`') || (key & ELW_CTRL) || (key & ELW_ALT))
+		char keychar = tolower(key_to_char(key_unicode));
+		if ((keychar == '`') || (key_mod & KMOD_CTRL) || (key_mod & KMOD_ALT) || items_list_disable_find_list)
 			return 0;
-		return Vars::win()->keypress(keychar);
+		return Vars::win()->keypress(key_code, key_unicode, key_mod);
 	}
 
 	static int resize_itemlist_handler(window_info *win, int new_width, int new_height)
@@ -1553,6 +1621,8 @@ CHECK_GL_ERRORS();
 //
 extern "C"
 {
+	int items_list_disable_find_list = 0;
+
 	void toggle_items_list_window(window_info *win)
 		{ ItemLists::Vars::win()->show(win); }
 
@@ -1564,17 +1634,17 @@ extern "C"
 		ItemLists::Vars::lists()->save();
 		ItemLists::Vars::cat_maps()->save();
 	}
-	
+
 	unsigned int item_lists_get_active(void)
 	{
 		return static_cast<unsigned int>(ItemLists::Vars::lists()->get_active());
 	}
-	
+
 	void item_lists_set_active(unsigned int active_list)
 	{
 		ItemLists::Vars::lists()->set_initial_active(static_cast<size_t>(active_list));
 	}
-	
+
 	void item_lists_reset_pickup_fail_time(void)
 	{
 		ItemLists::Vars::win()->reset_pickup_fail_time();

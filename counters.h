@@ -8,6 +8,14 @@
 extern "C" {
 #endif
 
+/* Counter structure */
+struct Counter {
+	char *name;
+	Uint32 n_session;
+	Uint32 n_total;
+	Uint32 extra;
+};
+
 int now_harvesting(void);
 void clear_now_harvesting(void);
 void set_now_harvesting(void);
@@ -17,6 +25,7 @@ extern Uint32 disconnect_time;
 extern char last_spell_name[60];
 extern unsigned int floating_counter_flags;
 extern int floating_session_counters;
+extern int enable_used_item_counter;
 
 void load_counters(void);
 void flush_counters(void);
@@ -26,7 +35,8 @@ void reset_session_counters(void);
 void print_session_counters(const char *category);
 
 void increment_death_counter(actor *a);
-void increment_critfail_counter(char *name);
+void increment_critfail_counter(const char *name);
+void increment_used_item_counter(const char *name, int quantity);
 void increment_harvest_counter(int quantity);
 void decrement_harvest_counter(int quantity);
 void increment_alchemy_counter(void);

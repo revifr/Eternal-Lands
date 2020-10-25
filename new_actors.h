@@ -16,18 +16,6 @@ extern float sitting; /*!< used to compute several actor related z values */
 
 /*!
  * \ingroup display_actors
- * \brief   Draws the given enhanced actor
- *
- *      Draws the enhanced actor given by \a actor_id, by calling \ref draw_model for the individual parts of the actor.
- *
- * \param actor_id  the id for the actor to draw
- *
- * \callgraph
- */
-void draw_enhanced_actor(actor * actor_id, int banner);
-
-/*!
- * \ingroup display_actors
  * \brief   Unwears the given item \a which_part from the actor \a actor_id.
  *
  *      Unwears the given item \a which_part from the actor given by \a actor_id.
@@ -90,24 +78,25 @@ void build_glow_color_table();
  *
  * 		The function is called from the new character creation screen. It adds an actor with the given parameters that can be displayed later using draw_interface_actor
  *
- * \param	x The x position
- * \param	y The y position
- * \param	z_rot The z rotation
- * \param   scale The size of the actor
- * \param	actor_type The race and sex
- * \param	skin The skin type
- * \param	hair The hair type
- * \param	eyes The eyes type
- * \param	shirt The shirt type
- * \param	pants The pants type
- * \param	boots The type of boots
- * \param	head The head type
+ * \param x The x position
+ * \param y The y position
+ * \param z_rot The z rotation
+ * \param scale The size of the actor
+ * \param actor_type The race and sex
+ * \param playername The name of the actor
+ * \param skin The skin type
+ * \param hair The hair type
+ * \param eyes The eyes type
+ * \param shirt The shirt type
+ * \param pants The pants type
+ * \param boots The type of boots
+ * \param head The head type
  * \retval actor*	A pointer to the actor created
  * \sa		client_serv.h
  * \callgraph
  */
-actor * add_actor_interface(float x, float y, float z_rot, float scale, int actor_type, short skin, short hair, short eyes,
-							short shirt, short pants, short boots, short head);
+actor * add_actor_interface(float x, float y, float z_rot, float scale, int actor_type, const char *playername, short skin,
+		short hair, short eyes, short shirt, short pants, short boots, short head);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -28,17 +28,6 @@ extern int time_warn_s;	/*!< How many minutes before sunrise/sunset to give a wa
 extern int time_warn_d;	/*!< How many minutes before the new day to give a warning */
 
 /*!
- * \brief Print the Eternal Lands version number
- *
- *	Print the Eternal Lands version in string \a str.
- *
- * \param str	the character buffer in which the string is placed
- * \param len	the size of the buffer
- * \callgraph
- */
-void print_version_string (char *buf, size_t len);
-
-/*!
  * \brief checks whether a console command is waiting and executes it if necessary.
  *
  *      Checks whether a console command is waiting in the que and executes it if necessary.
@@ -66,7 +55,7 @@ void do_tab_complete(text_message *input);
 void reset_tab_completer(void);
 
 void auto_save_local_and_server(void);
-int save_local_data(char * text, int len);
+void save_local_data(void);
 
 int command_time(char *text, int len);
 int command_date(char *text, int len);

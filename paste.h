@@ -72,12 +72,12 @@ void process_copy(XSelectionRequestEvent* e);
 #endif // !def OSX && !def WINDOWS
 
 /*!
- * \brief Paste the given string into the specified text widget
+ * \brief Initialise the copy/paste routines.
  *
- * \param widget text widget to receive string
- * \param text string to paste into widget
+ * Calls XSetErrorHandler().
  */
-void do_paste_to_text_field (widget_list *widget, const char* text);
+void init_x11_copy_paste(void);
+
 
 #ifdef __cplusplus
 } // extern "C"

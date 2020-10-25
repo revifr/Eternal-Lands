@@ -9,6 +9,9 @@
 #include <errno.h>
 #include <ctype.h>
 #include <time.h>
+#ifdef TTF
+#include <SDL2/SDL_ttf.h>
+#endif
 #include "astrology.h"
 #include "init.h"
 #include "2d_objects.h"
@@ -45,7 +48,6 @@
 #include "langselwin.h"
 #include "lights.h"
 #include "loading_win.h"
-#include "loginwin.h"
 #include "multiplayer.h"
 #include "manufacture.h"
 #include "astrology.h"
@@ -85,6 +87,7 @@
 #include "user_menus.h"
 #include "emotes.h"
 #include "image_loading.h"
+#include "main.h"
 #include "io/fileutil.h"
 #ifdef  CUSTOM_UPDATE
 #include "custom_update.h"
@@ -92,32 +95,6 @@
 
 #define	CFG_VERSION 7	// change this when critical changes to el.cfg are made that will break it
 
-int ini_file_size=0;
-
-int disconnected= 1;
-int auto_update= 1;
-#ifdef  CUSTOM_UPDATE
-int custom_update= 1;
-int custom_clothing= 1;
-#endif  //CUSTOM_UPDATE
-
-int exit_now=0;
-int restart_required=0;
-int allow_restart=1;
-int poor_man=0;
-
-#ifdef ANTI_ALIAS
-int anti_alias=0;
-#endif  //ANTI_ALIAS
-
-int special_effects=0;
-
-int isometric=1;
-int mouse_limit=15;
-int no_adjust_shadows=0;
-int clouds_shadows=1;
-int item_window_on_drop=1;
-int buddy_log_notice=1;
 char configdir[256]="./";
 #ifdef DATA_DIR
 char datadir[256]=DATA_DIR;
@@ -125,19 +102,10 @@ char datadir[256]=DATA_DIR;
 char datadir[256]="./";
 #endif //DATA_DIR
 
-char lang[10] = "en";
 static int no_lang_in_config = 0;
 
-int video_mode_set=0;
-
-#ifdef OSX
-int emulate3buttonmouse=0;
-#endif
-
-void read_command_line(); //from main.c
-
 #ifndef FASTER_MAP_LOAD
-static void load_harvestable_list()
+static void load_harvestable_list(void)
 {
 	FILE *f = NULL;
 	int i = 0;
@@ -163,7 +131,7 @@ static void load_harvestable_list()
 	fclose(f);
 }
 
-static void load_entrable_list()
+static void load_entrable_list(void)
 {
 	FILE *f = NULL;
 	int i=0;
@@ -189,39 +157,7 @@ static void load_entrable_list()
 }
 #endif // FASTER_MAP_LOAD
 
-void load_knowledge_list()
-{
-	FILE *f = NULL;
-	int i=0;
-	char strLine[255];
-	char *out;
-
-	memset(knowledge_list, 0, sizeof(knowledge_list));
-	i= 0;
-	knowledge_count= 0;
-	// try the language specific knowledge list
-	f=open_file_lang("knowledge.lst", "rb");
-	if(f == NULL){
-		LOG_ERROR("%s: %s \"knowledge.lst\": %s\n", reg_error_str, cant_open_file, strerror(errno));
-		return;
-	}
-	while(1)
-		{
-			if(!fgets(strLine, sizeof(strLine), f)) {
-				break;
-			}
-			out = knowledge_list[i].name;
-			my_xmlStrncopy(&out, strLine, sizeof(knowledge_list[i].name)-1);
-			i++;
-		}
-	// memorize the count
-	knowledge_count= i;
-	// close the file
-	fclose(f);
-}
-
-
-void read_config()
+static void read_config(void)
 {
 	// Set our configdir
 	const char * tcfg = get_path_config();
@@ -235,9 +171,13 @@ void read_config()
 		fprintf(stderr, "%s\n", err_stg);
 		LOG_ERROR(err_stg);
 		SDL_Quit ();
+		FATAL_ERROR_WINDOW(err_stg);
 		exit (1);
 	}
+}
 
+static void check_language(void)
+{
 	/* if language is not set, default to "en" but use the language selection window */
 	if (strlen(lang) == 0)
 	{
@@ -245,37 +185,16 @@ void read_config()
 		safe_strncpy(lang, "en", sizeof(lang));
 		LOG_INFO("No language set so defaulting to [%s] and using language selection window", lang );
 	}
-
-#ifndef WINDOWS
-	if (chdir(datadir) != 0)
-	{
-		LOG_ERROR("%s() chdir(\"%s\") failed: %s\n", __FUNCTION__, datadir, strerror(errno));
-	}
-#endif //!WINDOWS
-
-	if(password_str[0])//We have a password
-	{
-		size_t k;
-
-		for (k=0; k < strlen (password_str); k++)
-			display_password_str[k] = '*';
-		display_password_str[k] = 0;
-	}
-	else if (username_str[0]) //We have a username but not a password...
-	{
-		username_box_selected = 0;
-		password_box_selected = 1;
-	}
 }
 
-void read_bin_cfg()
+static void read_bin_cfg(void)
 {
 	FILE *f = NULL;
 	bin_cfg cfg_mem;
 	int i;
 	const char *fname = "el.cfg";
 	size_t ret;
-	int have_additions = 1;
+	int have_quickspells = 1, have_chat_win = 1;
 
 	memset(&cfg_mem, 0, sizeof(cfg_mem));	// make sure its clean
 
@@ -285,12 +204,14 @@ void read_bin_cfg()
 	fclose(f);
 
 	// If more options are added to the end of the structure, we can maintain backwards compatibility.
-	// If have_additions is not true, those options will remain set to zero as the file does not include them.
+	// For each addition we can check the size to see if its present and use it if so, otherwise use zeros.
 	// We only need to change the version number if we alter/remove older options.
 	// We still need to check the size is what is expected.
 
-	if (ret == sizeof(cfg_mem) - 2 * sizeof(unsigned int))
-		have_additions = 0;
+	if (ret == (sizeof(cfg_mem) - 2 * sizeof(int)))
+		have_chat_win = 0;
+	else if (ret == (sizeof(cfg_mem) - 2 * sizeof(int) - 2 * sizeof(unsigned int)))
+		have_quickspells = have_chat_win = 0;
 	else if (ret != sizeof(cfg_mem))
 	{
 		LOG_ERROR("%s() failed to read %s\n", __FUNCTION__, fname);
@@ -302,66 +223,48 @@ void read_bin_cfg()
 
 	//good, retrive the data
 	// TODO: move window save/restore into the window handler
-	items_menu_x=cfg_mem.items_menu_x;
-	items_menu_y=cfg_mem.items_menu_y;
+	set_pos_MW(MW_ITEMS, cfg_mem.items_menu_x, cfg_mem.items_menu_y);
 
-	ground_items_menu_x=cfg_mem.ground_items_menu_x & 0xFFFF;
-	ground_items_menu_y=cfg_mem.ground_items_menu_y & 0xFFFF;
+	set_pos_MW(MW_BAGS, cfg_mem.ground_items_menu_x & 0xFFFF, cfg_mem.ground_items_menu_y & 0xFFFF);
 	ground_items_visible_grid_cols = cfg_mem.ground_items_menu_x >> 16;
 	ground_items_visible_grid_rows = cfg_mem.ground_items_menu_y >> 16;
 
-	ranging_win_x=cfg_mem.ranging_win_x;
-	ranging_win_y=cfg_mem.ranging_win_y;
+	set_pos_MW(MW_RANGING, cfg_mem.ranging_win_x, cfg_mem.ranging_win_y);
 
-	trade_menu_x=cfg_mem.trade_menu_x;
-	trade_menu_y=cfg_mem.trade_menu_y;
+	set_pos_MW(MW_TRADE, cfg_mem.trade_menu_x, cfg_mem.trade_menu_y);
 
-	sigil_menu_x=cfg_mem.sigil_menu_x;
-	sigil_menu_y=cfg_mem.sigil_menu_y;
-	start_mini_spells=cfg_mem.start_mini_spells;
-	emotes_menu_x=cfg_mem.emotes_menu_x;
-	emotes_menu_y=cfg_mem.emotes_menu_y;
+	set_pos_MW(MW_SPELLS, cfg_mem.sigil_menu_x, cfg_mem.sigil_menu_y);
 
-	dialogue_menu_x=cfg_mem.dialogue_menu_x;
-	dialogue_menu_y=cfg_mem.dialogue_menu_y;
+	set_pos_MW(MW_EMOTE, cfg_mem.emotes_menu_x, cfg_mem.emotes_menu_y);
 
-	manufacture_menu_x=cfg_mem.manufacture_menu_x;
-	manufacture_menu_y=cfg_mem.manufacture_menu_y;
+	set_pos_MW(MW_DIALOGUE, cfg_mem.dialogue_menu_x, cfg_mem.dialogue_menu_y);
 
-	astrology_win_x = cfg_mem.astrology_win_x;
- 	astrology_win_y = cfg_mem.astrology_win_y;
+	set_pos_MW(MW_MANU, cfg_mem.manufacture_menu_x, cfg_mem.manufacture_menu_y);
 
-	tab_stats_x=cfg_mem.tab_stats_x;
-	tab_stats_y=cfg_mem.tab_stats_y;
+	set_pos_MW(MW_ASTRO, cfg_mem.astrology_win_x, cfg_mem.astrology_win_y);
 
-	elconfig_menu_x=cfg_mem.elconfig_menu_x;
-	elconfig_menu_y=cfg_mem.elconfig_menu_y;
+	set_pos_MW(MW_STATS, cfg_mem.tab_stats_x, cfg_mem.tab_stats_y);
 
-	tab_help_x=cfg_mem.tab_help_x;
-	tab_help_y=cfg_mem.tab_help_y;
+	set_pos_MW(MW_CONFIG, cfg_mem.elconfig_menu_x, cfg_mem.elconfig_menu_y);
 
-	storage_win_x=cfg_mem.storage_win_x;
-	storage_win_y=cfg_mem.storage_win_y;
+	set_pos_MW(MW_HELP, cfg_mem.tab_help_x, cfg_mem.tab_help_y);
 
-	buddy_menu_x=cfg_mem.buddy_menu_x;
-	buddy_menu_y=cfg_mem.buddy_menu_y;
+	set_pos_MW(MW_STORAGE, cfg_mem.storage_win_x, cfg_mem.storage_win_y);
 
-	questlog_menu_x=cfg_mem.questlog_win_x;
-	questlog_menu_y=cfg_mem.questlog_win_y;
+	set_pos_MW(MW_BUDDY, cfg_mem.buddy_menu_x, cfg_mem.buddy_menu_y);
 
-	minimap_win_x=cfg_mem.minimap_win_x;
-	minimap_win_y=cfg_mem.minimap_win_y;
+	set_pos_MW(MW_QUESTLOG, cfg_mem.questlog_win_x, cfg_mem.questlog_win_y);
+
+	set_pos_MW(MW_MINIMAP, cfg_mem.minimap_win_x, cfg_mem.minimap_win_y);
 	minimap_tiles_distance=cfg_mem.minimap_zoom;
 
 	tab_selected=cfg_mem.tab_selected;
 
-	tab_info_x=cfg_mem.tab_info_x;
-	tab_info_y=cfg_mem.tab_info_y;
+	set_pos_MW(MW_INFO, cfg_mem.tab_info_x, cfg_mem.tab_info_y);
 
 	if(quickbar_relocatable > 0)
 	{
-		quickbar_x = cfg_mem.quickbar_x;
-		quickbar_y = cfg_mem.quickbar_y;
+		set_pos_MW(MW_QUICKBAR, cfg_mem.quickbar_x, cfg_mem.quickbar_y);
 		quickbar_dir = cfg_mem.quickbar_flags & 0xFF;
 		quickbar_draggable = (cfg_mem.quickbar_flags & 0xFF00) >> 8;
 		if (quickbar_dir != HORIZONTAL)
@@ -398,9 +301,9 @@ void read_bin_cfg()
 	}
 
 	if(zoom_level != 0.0f) resize_root_window();
-	
+
 	have_saved_langsel = cfg_mem.have_saved_langsel;
-	
+
 	use_small_items_window = cfg_mem.misc_bool_options & 1;
 	manual_size_items_window = (cfg_mem.misc_bool_options >> 1) & 1;
 	allow_equip_swap = (cfg_mem.misc_bool_options >> 2) & 1;
@@ -422,6 +325,12 @@ void read_bin_cfg()
 	items_mod_click_any_cursor = (cfg_mem.misc_bool_options >> 18) & 1;
 	disable_storage_filter = (cfg_mem.misc_bool_options >> 19) & 1;
 	hud_timer_keep_state = (cfg_mem.misc_bool_options >> 20) & 1;
+	items_list_disable_find_list = (cfg_mem.misc_bool_options >> 21) & 1;
+	lock_skills_selection = (cfg_mem.misc_bool_options >> 22) & 1;
+	items_disable_text_block = (cfg_mem.misc_bool_options >> 23) & 1;
+	items_buttons_on_left = (cfg_mem.misc_bool_options >> 24) & 1;
+	items_equip_grid_on_left = (cfg_mem.misc_bool_options >> 25) & 1;
+	sort_storage_items = (cfg_mem.misc_bool_options >> 26) & 1;
 
 	set_options_user_menus(cfg_mem.user_menu_win_x, cfg_mem.user_menu_win_y, cfg_mem.user_menu_options);
 
@@ -431,11 +340,14 @@ void read_bin_cfg()
 
 	set_settings_hud_indicators(cfg_mem.hud_indicators_options, cfg_mem.hud_indicators_position);
 
-	if (have_additions)
+	if (have_quickspells)
 		set_quickspell_options(cfg_mem.quickspell_win_options, cfg_mem.quickspell_win_position);
+
+	if (have_chat_win)
+		set_pos_MW(MW_CHAT, cfg_mem.chat_win_x, cfg_mem.chat_win_y);
 }
 
-void save_bin_cfg()
+void save_bin_cfg(void)
 {
 	FILE *f = NULL;
 	bin_cfg cfg_mem;
@@ -451,140 +363,47 @@ void save_bin_cfg()
 	cfg_mem.cfg_version_num=CFG_VERSION;	// set the version number
 	//good, retrive the data
 	// TODO: move window save/restore into the window handler
-	if(range_win >= 0) {
-		cfg_mem.ranging_win_x=windows_list.window[range_win].cur_x;
-		cfg_mem.ranging_win_y=windows_list.window[range_win].cur_y;
-	} else {
-		cfg_mem.ranging_win_x=ranging_win_x;
-		cfg_mem.ranging_win_y=ranging_win_y;
-	}
+	set_save_pos_MW(MW_RANGING, &cfg_mem.ranging_win_x, &cfg_mem.ranging_win_y);
 
-	if(tab_help_win >= 0) {
-		cfg_mem.tab_help_x=windows_list.window[tab_help_win].cur_x;
-		cfg_mem.tab_help_y=windows_list.window[tab_help_win].cur_y;
-	} else {
-		cfg_mem.tab_help_x=tab_help_x;
-		cfg_mem.tab_help_y=tab_help_y;
-	}
+	set_save_pos_MW(MW_CHAT, &cfg_mem.chat_win_x, &cfg_mem.chat_win_y);
 
-	if(items_win >= 0) {
-		cfg_mem.items_menu_x=windows_list.window[items_win].cur_x;
-		cfg_mem.items_menu_y=windows_list.window[items_win].cur_y;
-	} else {
-		cfg_mem.items_menu_x=items_menu_x;
-		cfg_mem.items_menu_y=items_menu_y;
-	}
+	set_save_pos_MW(MW_HELP, &cfg_mem.tab_help_x, &cfg_mem.tab_help_y);
 
-	cfg_mem.ground_items_menu_x = ground_items_menu_x;
-	cfg_mem.ground_items_menu_y = ground_items_menu_y;
+	set_save_pos_MW(MW_ITEMS, &cfg_mem.items_menu_x, &cfg_mem.items_menu_y);
+
+	set_save_pos_MW(MW_BAGS, &cfg_mem.ground_items_menu_x, &cfg_mem.ground_items_menu_y);
 	cfg_mem.ground_items_menu_x |= ground_items_visible_grid_cols << 16;
 	cfg_mem.ground_items_menu_y |= ground_items_visible_grid_rows << 16;
 
-	if(trade_win >= 0) {
-		cfg_mem.trade_menu_x=windows_list.window[trade_win].cur_x;
-		cfg_mem.trade_menu_y=windows_list.window[trade_win].cur_y;
-	} else {
-		cfg_mem.trade_menu_x=trade_menu_x;
-		cfg_mem.trade_menu_y=trade_menu_y;
-	}
+	set_save_pos_MW(MW_TRADE, &cfg_mem.trade_menu_x, &cfg_mem.trade_menu_y);
 
 	cfg_mem.start_mini_spells=start_mini_spells;
-	if(sigil_win >= 0) {
-		cfg_mem.sigil_menu_x=windows_list.window[sigil_win].cur_x;
-		cfg_mem.sigil_menu_y=windows_list.window[sigil_win].cur_y;
-	} else {
-		cfg_mem.sigil_menu_x=sigil_menu_x;
-		cfg_mem.sigil_menu_y=sigil_menu_y;
-	}
-	if(emotes_win >= 0) {
-		cfg_mem.emotes_menu_x=windows_list.window[emotes_win].cur_x;
-		cfg_mem.emotes_menu_y=windows_list.window[emotes_win].cur_y;
-	} else {
-		cfg_mem.emotes_menu_x=emotes_menu_x;
-		cfg_mem.emotes_menu_y=emotes_menu_y;
-	}
-	if(dialogue_win >= 0) {
-		cfg_mem.dialogue_menu_x=windows_list.window[dialogue_win].cur_x;
-		cfg_mem.dialogue_menu_y=windows_list.window[dialogue_win].cur_y;
-	} else {
-		cfg_mem.dialogue_menu_x=dialogue_menu_x;
-		cfg_mem.dialogue_menu_y=dialogue_menu_y;
-	}
+	set_save_pos_MW(MW_SPELLS, &cfg_mem.sigil_menu_x, &cfg_mem.sigil_menu_y);
 
-	if(manufacture_win >= 0) {
-		cfg_mem.manufacture_menu_x=windows_list.window[manufacture_win].cur_x;
-		cfg_mem.manufacture_menu_y=windows_list.window[manufacture_win].cur_y;
-	} else {
-		cfg_mem.manufacture_menu_x=manufacture_menu_x;
-		cfg_mem.manufacture_menu_y=manufacture_menu_y;
-	}
+	set_save_pos_MW(MW_EMOTE, &cfg_mem.emotes_menu_x, &cfg_mem.emotes_menu_y);
 
-	if(astrology_win >= 0) {
- 		cfg_mem.astrology_win_x=windows_list.window[astrology_win].cur_x;
- 		cfg_mem.astrology_win_y=windows_list.window[astrology_win].cur_y;
- 	} else {
- 		cfg_mem.astrology_win_x=astrology_win_x;
- 		cfg_mem.astrology_win_y=astrology_win_y;
- 	}
+	set_save_pos_MW(MW_DIALOGUE, &cfg_mem.dialogue_menu_x, &cfg_mem.dialogue_menu_y);
 
-	if(elconfig_win >= 0) {
-		cfg_mem.elconfig_menu_x=windows_list.window[elconfig_win].cur_x;
-		cfg_mem.elconfig_menu_y=windows_list.window[elconfig_win].cur_y;
-	} else {
-		cfg_mem.elconfig_menu_x=elconfig_menu_x;
-		cfg_mem.elconfig_menu_y=elconfig_menu_y;
-	}
+	set_save_pos_MW(MW_MANU, &cfg_mem.manufacture_menu_x, &cfg_mem.manufacture_menu_y);
 
-	if(storage_win >= 0) {
-		cfg_mem.storage_win_x=windows_list.window[storage_win].cur_x;
-		cfg_mem.storage_win_y=windows_list.window[storage_win].cur_y;
-	} else {
-		cfg_mem.storage_win_x=storage_win_x;
-		cfg_mem.storage_win_y=storage_win_y;
-	}
+	set_save_pos_MW(MW_ASTRO, &cfg_mem.astrology_win_x, &cfg_mem.astrology_win_y);
 
-	if(tab_stats_win >= 0) {
-		cfg_mem.tab_stats_x=windows_list.window[tab_stats_win].cur_x;
-		cfg_mem.tab_stats_y=windows_list.window[tab_stats_win].cur_y;
-	} else {
-		cfg_mem.tab_stats_x=tab_stats_x;
-		cfg_mem.tab_stats_y=tab_stats_y;
-	}
+	set_save_pos_MW(MW_CONFIG, &cfg_mem.elconfig_menu_x, &cfg_mem.elconfig_menu_y);
 
-	if(buddy_win >= 0) {
-		cfg_mem.buddy_menu_x=windows_list.window[buddy_win].cur_x;
-		cfg_mem.buddy_menu_y=windows_list.window[buddy_win].cur_y;
-	} else {
-		cfg_mem.buddy_menu_x=buddy_menu_x;
-		cfg_mem.buddy_menu_y=buddy_menu_y;
-	}
+	set_save_pos_MW(MW_STORAGE, &cfg_mem.storage_win_x, &cfg_mem.storage_win_y);
 
-	if(questlog_win >= 0) {
-		cfg_mem.questlog_win_x=windows_list.window[questlog_win].cur_x;
-		cfg_mem.questlog_win_y=windows_list.window[questlog_win].cur_y;
-	} else {
-		cfg_mem.questlog_win_x=questlog_menu_x;
-		cfg_mem.questlog_win_y=questlog_menu_y;
-	}
+	set_save_pos_MW(MW_STATS, &cfg_mem.tab_stats_x, &cfg_mem.tab_stats_y);
 
-	if(minimap_win >= 0) {
-		cfg_mem.minimap_win_x=windows_list.window[minimap_win].cur_x;
-		cfg_mem.minimap_win_y=windows_list.window[minimap_win].cur_y;
-	} else {
-		cfg_mem.minimap_win_x=minimap_win_x;
-		cfg_mem.minimap_win_y=minimap_win_y;
-	}
+	set_save_pos_MW(MW_BUDDY, &cfg_mem.buddy_menu_x, &cfg_mem.buddy_menu_y);
+
+	set_save_pos_MW(MW_QUESTLOG, &cfg_mem.questlog_win_x, &cfg_mem.questlog_win_y);
+
+	set_save_pos_MW(MW_MINIMAP, &cfg_mem.minimap_win_x, &cfg_mem.minimap_win_y);
 	cfg_mem.minimap_zoom=minimap_tiles_distance;
 
 	cfg_mem.tab_selected=get_tab_selected();
 
-	if(tab_info_win >= 0) {
-		cfg_mem.tab_info_x=windows_list.window[tab_info_win].cur_x;
-		cfg_mem.tab_info_y=windows_list.window[tab_info_win].cur_y;
-	} else {
-		cfg_mem.tab_info_x=tab_info_x;
-		cfg_mem.tab_info_y=tab_info_y;
-	}
+	set_save_pos_MW(MW_INFO, &cfg_mem.tab_info_x, &cfg_mem.tab_info_y);
 
 	cfg_mem.banner_settings = 0;
 	cfg_mem.banner_settings |= view_health_bar;
@@ -597,12 +416,8 @@ void save_bin_cfg()
 
 	cfg_mem.quantity_selected=(quantities.selected<ITEM_EDIT_QUANT)?quantities.selected :0;
 
-	if (quickbar_win >= 0 && quickbar_relocatable > 0)
-	{
-		cfg_mem.quickbar_x = windows_list.window[quickbar_win].cur_x;
-		cfg_mem.quickbar_y = windows_list.window[quickbar_win].cur_y;
-		cfg_mem.quickbar_flags = quickbar_dir | (quickbar_draggable<<8);
-	}
+	set_save_pos_MW(MW_QUICKBAR, &cfg_mem.quickbar_x, &cfg_mem.quickbar_y);
+	cfg_mem.quickbar_flags = quickbar_dir | (quickbar_draggable<<8);
 
 	get_statsbar_watched_stats(cfg_mem.watch_this_stats);
 
@@ -616,9 +431,9 @@ void save_bin_cfg()
 	for(i=0;i<ITEM_EDIT_QUANT;i++){
 		cfg_mem.quantity[i]=quantities.quantity[i].val;
 	}
-	
+
 	cfg_mem.have_saved_langsel = have_saved_langsel;
-	
+
 	cfg_mem.misc_bool_options = 0;
 	cfg_mem.misc_bool_options |= use_small_items_window;
 	cfg_mem.misc_bool_options |= manual_size_items_window << 1;
@@ -641,6 +456,12 @@ void save_bin_cfg()
 	cfg_mem.misc_bool_options |= items_mod_click_any_cursor << 18;
 	cfg_mem.misc_bool_options |= disable_storage_filter << 19;
 	cfg_mem.misc_bool_options |= hud_timer_keep_state << 20;
+	cfg_mem.misc_bool_options |= items_list_disable_find_list << 21;
+	cfg_mem.misc_bool_options |= lock_skills_selection << 22;
+	cfg_mem.misc_bool_options |= items_disable_text_block << 23;
+	cfg_mem.misc_bool_options |= items_buttons_on_left << 24;
+	cfg_mem.misc_bool_options |= items_equip_grid_on_left << 25;
+	cfg_mem.misc_bool_options |= sort_storage_items << 26;
 
 	get_options_user_menus(&cfg_mem.user_menu_win_x, &cfg_mem.user_menu_win_y, &cfg_mem.user_menu_options);
 
@@ -657,23 +478,22 @@ void save_bin_cfg()
 
 }
 
-void init_e3d_cache()
+void init_e3d_cache(void)
 {
 	//cache_e3d= cache_init(1000, &destroy_e3d);	//TODO: autofree the name as well
 	cache_e3d = cache_init("E3d cache", 1500, NULL);	//no aut- free permitted
 	cache_set_compact(cache_e3d, &free_e3d_va);	// to compact, free VA arrays
 	cache_set_time_limit(cache_e3d, 5*60*1000);
-	cache_set_size_limit(cache_e3d, 8*1024*1024);
 }
 
 #ifndef FASTER_MAP_LOAD
-void init_2d_obj_cache()
+void init_2d_obj_cache(void)
 {
 	memset(obj_2d_def_cache, 0, sizeof(obj_2d_def_cache));
 }
 #endif
 
-void init_stuff()
+void init_stuff(void)
 {
 	int seed;
 	char file_name[250];
@@ -707,6 +527,9 @@ void init_stuff()
 	// Parse command line options
 	read_command_line();
 
+	// check language is set or default and select
+	check_language();
+
 	// all options loaded
 	options_loaded();
 
@@ -732,36 +555,23 @@ void init_stuff()
 
 	// initialize the fonts, but don't load the textures yet. Do that here
 	// because the messages need the font widths.
-	init_fonts();
-
-	//OK, we have the video mode settings...
-	setup_video_mode(full_screen,video_mode);
-	//now you may set the video mode using the %<foo> in-game
-	video_mode_set=1;
+	if (!initialize_fonts())
+	{
+		// If we can't load fonts, we cant communicate with the user. Give up.
+		LOG_ERROR("%s\n", fatal_data_error);
+		fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, fatal_data_error);
+		SDL_Quit();
+		FATAL_ERROR_WINDOW(fatal_data_error);
+		exit(1);
+	}
+	// Update values for multi-selects that weren't fully initialized yet
+	check_deferred_options();
 
 	//Good, we should be in the right working directory - load all translatables from their files
 	load_translatables();
 
-	//if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_NOPARACHUTE | SDL_INIT_EVENTTHREAD) == -1)	// experimental
-	if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_NOPARACHUTE) == -1)
-		{
-			LOG_ERROR("%s: %s\n", no_sdl_str, SDL_GetError());
-			fprintf(stderr, "%s: %s\n", no_sdl_str, SDL_GetError());
-			SDL_Quit();
-			exit(1);
-		}
+	//Initialise the SDL window and the GL context
 	init_video();
-
-#ifdef MAP_EDITOR2
-	SDL_WM_SetCaption( "Map Editor", "mapeditor" );
-#else
-	SDL_WM_SetCaption( win_principal, "eternallands" );
-#endif
-
-#ifdef OSX
-	// don't emulate a 3 button mouse except you still have a 1 button mouse, ALT+leftclick doesn't work with the emulation
-	if (!emulate3buttonmouse) SDL_putenv("SDL_HAS3BUTTONMOUSE=1");
-#endif
 
 	//Init the caches here, as the loading window needs them
 	cache_system_init(MAX_CACHE_SYSTEM);
@@ -770,15 +580,6 @@ void init_stuff()
 #ifndef FASTER_MAP_LOAD
 	init_2d_obj_cache();
 #endif
-	//now load the font textures
-	if (load_font_textures () != 1)
-	{
-		LOG_ERROR("%s\n", fatal_data_error);
-		fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, fatal_data_error);
-		SDL_Quit();
-		exit(1);
-	}
-	CHECK_GL_ERRORS();
 
 	// read the continent map info
 	read_mapinfo();
@@ -907,7 +708,6 @@ void init_stuff()
 	legend_text = load_texture_cached("maps/legend.dds", tt_gui);
 
 	ground_detail_text = load_texture_cached("textures/ground_detail.dds", tt_gui);
-	CHECK_GL_ERRORS();
 	init_login_screen ();
 	init_spells ();
 
@@ -922,6 +722,7 @@ void init_stuff()
 		fprintf(stderr, "%s: %s\n", failed_sdl_net_init, SDLNet_GetError());
 		SDLNet_Quit();
 		SDL_Quit();
+		FATAL_ERROR_WINDOW(failed_sdl_net_init);
 		exit(2);
 	}
 	update_loading_win(init_timers_str, 5);
@@ -930,6 +731,7 @@ void init_stuff()
 		LOG_ERROR("%s: %s\n", failed_sdl_timer_init, SDL_GetError());
 		fprintf(stderr, "%s: %s\n", failed_sdl_timer_init, SDL_GetError());
 		SDL_Quit();
+		FATAL_ERROR_WINDOW(failed_sdl_timer_init);
 	 	exit(1);
 	}
 	update_loading_win(load_encyc_str, 5);
@@ -960,6 +762,7 @@ void init_stuff()
 		LOG_ERROR(rules_not_found);
 		fprintf(stderr, "%s\n", rules_not_found);
 		SDL_Quit();
+		FATAL_ERROR_WINDOW(rules_not_found);
 		exit(3);
 	}
 
@@ -972,8 +775,6 @@ void init_stuff()
 	init_books();
 
 	update_loading_win(init_display_str, 5);
-	if (!disable_gamma_adjust)
-		SDL_SetGamma(gamma_var, gamma_var, gamma_var);
 
 	draw_scene_timer= SDL_AddTimer (1000/(18*4), my_timer, NULL);
 	misc_timer= SDL_AddTimer (500, check_misc, NULL);
@@ -1001,12 +802,12 @@ void init_stuff()
 #ifdef NEW_SOUND
 	// Try to turn the sound on now so we have it for the login window
 	if (have_sound_config)
-		turn_sound_on();
-	else
 	{
-		sound_on = 0;
-		turn_sound_off();
+		if (sound_on)
+			turn_sound_on();
 	}
+	else
+		turn_sound_off();
 #endif // NEW_SOUND
 
 	// display something
@@ -1031,5 +832,6 @@ void init_stuff()
 	skybox_init_gl();
 	popup_init();
 
+	DO_CHECK_GL_ERRORS();
 	LOG_DEBUG("Init done!");
 }

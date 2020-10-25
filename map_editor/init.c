@@ -14,8 +14,6 @@
 #include "../io/elfilewrapper.h"
 #include "../io/fileutil.h"
 
-char lang[10]={"en"};
-
 char datadir[256]={"./"};
 char configdir[256]={"./"};
 
@@ -44,7 +42,7 @@ void read_config()
 	// Set our configdir
 	const char * tcfg = get_path_config();
 
-	my_strncp (configdir, tcfg , sizeof(configdir));
+	safe_strncpy(configdir, tcfg, sizeof(configdir));
 
 	if ( !read_el_ini () )
 	{
@@ -70,8 +68,12 @@ void init_stuff()
 	int i;
 	int seed;
 
-	chdir(DATA_DIR);
-	
+	if (chdir(DATA_DIR) != 0)
+	{
+		LOG_ERROR("Failed to set directory [%s]", DATA_DIR);
+		exit (1);
+	}
+
 #ifndef WINDOWS
 	setlocale(LC_NUMERIC,"en_US");
 #endif
@@ -85,7 +87,7 @@ void init_stuff()
 	init_texture_cache();
 
 	init_vars();
-	
+
 	read_config();
 
 	file_check_datadir();
@@ -117,7 +119,9 @@ void init_stuff()
 	glClearColor( 0.0, 0.0, 0.0, 0.0 );
 	glClearStencil(0);
 
+#if !defined(SDL2)
 	SDL_EnableKeyRepeat (200, 100);
+#endif
 
 	seed = time (NULL);
   	srand (seed);
@@ -170,7 +174,7 @@ void init_stuff()
 	init_browser();
 
     if(SDL_InitSubSystem(SDL_INIT_TIMER)<0)
-    { 
+    {
         char str[120];
         snprintf(str, sizeof(str), "Couldn't initialize the timer: %s\n", SDL_GetError());
         log_error(__FILE__, __LINE__, str);
@@ -178,9 +182,13 @@ void init_stuff()
 	    exit(1);
     }
 
+#if defined(SDL2)
+	my_timer_id = SDL_AddTimer (1000/(18*4), my_timer, NULL);
+#else
 	SDL_SetTimer (1000/(18*4), my_timer);
 
 	SDL_EnableUNICODE(1);
+#endif
 
     //we might want to do this later.
 

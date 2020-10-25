@@ -11,7 +11,7 @@
 #include "eye_candy_wrapper.h"
 #include "font.h" // for ALT_INGAME_FONT_X_LEN
 #include "gl_init.h"
-#include "init.h" // for poor_man
+#include "elconfig.h" // for poor_man
 #include "interface.h" // for view_names
 #include "platform.h"
 #include "spells.h" // for the sigils texture
@@ -128,12 +128,14 @@ void update_buff_eye_candy(int actor_id) {
 	act = get_actor_ptr_from_id(actor_id);
 	if (act) {
 		int i = 0; // loop index
-        // turn on eye candy effects
-		if (act->buffs & BUFF_SHIELD && act->ec_buff_reference[((Uint32)(log(BUFF_SHIELD)/log(2)))] == NULL) {
-			act->ec_buff_reference[((Uint32)(log(BUFF_SHIELD)/log(2)))] = ec_create_ongoing_shield2(act, 1.0, 1.0, (poor_man ? 6 : 10), 1.0);
+		// turn on eye candy effects
+		Uint32 buff_index = (Uint32)(0.5 + log(BUFF_SHIELD)/log(2));
+		if (act->buffs & BUFF_SHIELD && act->ec_buff_reference[buff_index] == NULL) {
+			act->ec_buff_reference[buff_index] = ec_create_ongoing_shield2(act, 1.0, 1.0, (poor_man ? 6 : 10), 1.0);
 		}
-		if (act->buffs & BUFF_MAGIC_PROTECTION && act->ec_buff_reference[((Uint32)(log(BUFF_MAGIC_PROTECTION)/log(2)))] == NULL) {
-			act->ec_buff_reference[((Uint32)(log(BUFF_MAGIC_PROTECTION)/log(2)))] = ec_create_ongoing_magic_protection2(act, 1.0, 1.0, (poor_man ? 6 : 10), 1.0);
+		buff_index = (Uint32)(0.5 + log(BUFF_MAGIC_PROTECTION)/log(2));
+		if (act->buffs & BUFF_MAGIC_PROTECTION && act->ec_buff_reference[buff_index] == NULL) {
+			act->ec_buff_reference[buff_index] = ec_create_ongoing_magic_protection2(act, 1.0, 1.0, (poor_man ? 6 : 10), 1.0);
 		}
 /*
  * not yet implemented
@@ -147,7 +149,7 @@ void update_buff_eye_candy(int actor_id) {
 //		}
 		// turn off effects
 		for (i = 0; i < NUM_BUFFS; i++) {
-			if (act->ec_buff_reference[i] != NULL && !(act->buffs & ((Uint32)pow(2, i)))) {
+			if (act->ec_buff_reference[i] != NULL && !(act->buffs & ((Uint32)(0.5 + pow(2, i))))) {
 				ec_recall_effect(act->ec_buff_reference[i]);
 				act->ec_buff_reference[i] = NULL;
 			}
@@ -212,8 +214,8 @@ void draw_buffs(int actor_id, float x, float y,float z)
 			num_buffs++;
 		}
 		// move icons up by actor name and actor health bar
-		y = y + 1.0f/ALT_INGAME_FONT_X_LEN*SMALL_INGAME_FONT_Y_LEN*name_zoom*12.0*view_names // displayed_font_y_size from font.c
-		      + ALT_INGAME_FONT_Y_LEN*12.0*name_zoom*1.0f/ALT_INGAME_FONT_X_LEN; // healthbar_y_len from actors.c
+		y = y + 1.0f/ALT_INGAME_FONT_X_LEN*SMALL_INGAME_FONT_Y_LEN*font_scales[NAME_FONT]*12.0*view_names // displayed_font_y_size from font.c
+		      + ALT_INGAME_FONT_Y_LEN*12.0*font_scales[NAME_FONT]*1.0f/ALT_INGAME_FONT_X_LEN; // healthbar_y_len from actors.c
 		for (i = 0; i < num_buffs; i++)
 		{
 			cur_tex = texture_ids[i];
